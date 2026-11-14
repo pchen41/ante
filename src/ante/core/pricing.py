@@ -207,21 +207,25 @@ MIN_ATTEMPTS_FOR_TAIL_FIT = 30
 
 
 def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed: int = 0, n_samples: int = 200,
-          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR, integer: bool = False) -> Quote:
+          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR, integer: bool = False, sceptical: bool = True) -> Quote:
     """Price `target` from the attempt outcomes seen so far.
 
-    Continuous outcomes with real spread and a reasonable sample get a tail fit. Otherwise (few
-    attempts, or integer scores, whose distribution is a few atoms set by where the search started)
-    nothing can be extrapolated, so we count successes under a sceptical prior: with s successes in
-    n attempts,
+    Two models, combined conservatively.
 
-        P(attempt succeeds) ~ Beta(1/2 + s, prior_usd / (2 * cost_per_attempt) + n - s).
+    Success counting. With s successes in n attempts, P(attempt succeeds) ~ Beta(1/2 + s, b0 + n - s).
+    For a record target (`sceptical=True`) b0 = prior_usd / (2 * cost_per_attempt): before any
+    success the strategy is priced at `prior_usd + 2 * (dollars already spent on it)`, so every
+    dollar spent without a record makes the next dollar look worse. For the easier target "beat our
+    own best" (`sceptical=False`) b0 = 1/2, the plain Jeffreys posterior.
 
-    With no successes this prices the strategy at `prior_usd + 2 * (dollars already spent on it)`:
-    every dollar spent without reaching the target makes the next dollar look worse.
+    Tail extrapolation. Continuous outcomes with real spread and 30+ attempts also get a
+    generalized-Pareto tail fit. It is only allowed to make a strategy look *worse*: each sampled
+    probability is the minimum of the tail-fit sample and the success-count sample. A tail fit
+    cannot see a hard wall (for example a search that keeps rebuilding the record holder's own
+    arrangement), so it can rule strategies out but never promise a record that has not been seen.
 
-    A tail fit is also capped by the success count: it may not claim a higher success probability
-    than a draw from Beta(1/2 + s, 1/2 + n - s), the plain posterior after n attempts.
+    Integer scores are priced by success counting alone: their outcome distribution is a few atoms
+    set by where the search started, and extrapolating it is meaningless.
     """
     x = np.asarray(attempts, dtype=np.float64)
     x = x[np.isfinite(x)]
@@ -229,14 +233,13 @@ def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed
         return Quote("none", 0, cost_per_attempt, np.zeros(0))
     s = int((x >= target).sum() if maximize else (x <= target).sum())
     rng = np.random.default_rng(seed)
+    b0 = prior_usd / (2.0 * max(cost_per_attempt, 1e-12)) if sceptical else 0.5
+    counted = rng.beta(0.5 + s, b0 + x.size - s, size=n_samples)
     if integer or np.unique(x).size < 4 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
-        b0 = prior_usd / (2.0 * max(cost_per_attempt, 1e-12))
-        return Quote("beta", int(x.size), cost_per_attempt, rng.beta(0.5 + s, b0 + x.size - s, size=n_samples))
+        return Quote("beta", int(x.size), cost_per_attempt, counted)
     fit = fit_tail(x, maximize=maximize, n_boot=n_samples, seed=seed, xi_prior=xi_prior)
     t = target if maximize else -target
-    ps = fit.p_exceed_samples(t)
-    cap = rng.beta(0.5 + s, 0.5 + x.size - s, size=ps.size)
-    return Quote("gpd", int(x.size), cost_per_attempt, np.minimum(ps, cap), fit)
+    return Quote("gpd", int(x.size), cost_per_attempt, np.minimum(fit.p_exceed_samples(t), counted), fit)
 
 
 def best_of_n_quantiles(attempts, maximize: bool, n_future: float, levels=(0.1, 0.5, 0.9), fit: TailFit | None = None, seed: int = 0) -> list[float] | None:

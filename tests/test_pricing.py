@@ -98,3 +98,21 @@ def test_unproven_strategy_starts_at_the_sceptical_price_and_gets_dearer_with_fa
     assert q0.model == q1.model == "beta"
     assert 10.0 < q0.usd_to_target < 40.0  # about PRIOR_USD_TO_TARGET
     assert 40.0 < q1.usd_to_target < 90.0  # about prior + 2 * $20 spent
+
+
+def test_tail_fit_can_only_make_a_record_look_more_expensive():
+    """Outcomes piled up just short of the target (a hard wall) must not be priced below the sceptical prior."""
+    rng = np.random.default_rng(0)
+    wall = 0.10675139
+    x = wall + 1.2e-6 + np.abs(rng.normal(0, 4e-5, size=400))  # minimise; nothing ever gets below wall + 1.2e-6
+    q = pricing.quote(x, maximize=False, target=wall - 1e-9, cost_per_attempt=3e-4)
+    assert q.model == "gpd"
+    assert q.usd_to_target >= 0.9 * (pricing.PRIOR_USD_TO_TARGET + 2 * 400 * 3e-4)
+    hopeless = pricing.quote(x + 0.01, maximize=False, target=wall - 1e-9, cost_per_attempt=3e-4)
+    assert hopeless.usd_to_target > 100 * q.usd_to_target
+
+
+def test_own_best_target_is_priced_by_observed_frequency():
+    x = np.r_[np.full(90, 1.40), np.full(10, 1.30)]
+    q = pricing.quote(x, maximize=False, target=1.35, cost_per_attempt=0.01, sceptical=False)
+    assert 0.05 < q.p_attempt < 0.2

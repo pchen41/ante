@@ -167,7 +167,7 @@ class Market:
         else:
             eps = 0.5 if ps.integer else abs(bar) * 1e-12
             own = bar + eps if ps.maximize else bar - eps
-            q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0, integer=ps.integer)
+            q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0, integer=ps.integer, sceptical=False)
         return q_rec, q_best
 
     def forecast(self, s: Strategy, budget_usd: float) -> dict:

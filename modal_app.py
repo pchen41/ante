@@ -30,7 +30,11 @@ def _warm() -> None:
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("numpy==2.5.4", "scipy==1.18.1", "numba==0.68.1", "openai==2.6.1", "fastapi[standard]==0.162.0")
-    .env({"PYTHONPATH": "/root/src", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1"})
+    # NUMBA_CPU_NAME pins code generation to the x86-64-v3 level (AVX2), so the kernels compiled once at
+    # image build are reused on every worker instead of being recompiled per host CPU model.
+    .env({"PYTHONPATH": "/root/src", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1",
+          "NUMBA_CPU_NAME": "x86-64-v3",
+          "NUMBA_CPU_FEATURES": "+avx,+avx2,+bmi,+bmi2,+f16c,+fma,+lzcnt,+movbe,+popcnt,+sse3,+ssse3,+sse4.1,+sse4.2,+cx16,+sahf,+xsave"})
     .add_local_dir(ROOT / "data" / "arena", "/root/data/arena", copy=True)
     .add_local_dir(ROOT / "src" / "ante", "/root/src/ante", copy=True, ignore=["**/__pycache__"])
     .run_function(_warm)  # compile numba kernels and build lookup tables into the image
