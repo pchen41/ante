@@ -67,6 +67,7 @@ class Config:
     live_arena: bool = True
     seed: int = 0
     note: str = ""
+    app_id: str = ""  # Modal app that ran this (for reconciling estimated cost with the bill)
 
 
 class Loop:
@@ -139,6 +140,7 @@ class Loop:
         if stage == "pilot":
             # a pilot needs several independent seeds to be priced, even if that overshoots its nominal budget
             workers = max(workers, min(self.cfg.min_pilot_workers, self.runner.max_workers))
+        workers = max(self.runner.cores_per_container, workers - workers % self.runner.cores_per_container)  # fill whole containers
         est = workers * (seconds + runner_mod.CONTAINER_OVERHEAD_S) * runner_mod.USD_PER_CORE_S
         self.n_cards += 1
         cid = f"c{self.n_cards:04d}"

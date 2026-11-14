@@ -14,14 +14,22 @@ CPU_USD_PER_CORE_S = 0.0000131
 MEM_USD_PER_GIB_S = 0.00000222
 MEM_GIB_PER_CORE = 1.0
 USD_PER_CORE_S = CPU_USD_PER_CORE_S + MEM_GIB_PER_CORE * MEM_USD_PER_GIB_S
-CONTAINER_OVERHEAD_S = 5.0  # start-up time billed but not spent searching (estimate)
+# Seconds a container is billed for beyond the search itself: image start, imports, scale-down.
+# Calibrated against Modal's billing report (see docs/cost.md); re-check it whenever the worker config changes.
+CONTAINER_OVERHEAD_S = 12.0
 
 
 def card_cost(results: list[dict], cores_per_container: int = 1) -> tuple[float, float]:
-    """(estimated USD, core-seconds) for a finished card."""
+    """(estimated USD, core-seconds of search) for a finished card.
+
+    A container is billed for all its cores for as long as it lives, so each container costs
+    cores * (its longest job + overhead), whether or not every core had a job.
+    """
     core_s = sum(r["seconds"] for r in results)
-    containers = max(len(results) / max(cores_per_container, 1), 1.0)
-    billed = core_s + containers * cores_per_container * CONTAINER_OVERHEAD_S
+    billed = 0.0
+    for i in range(0, len(results), max(cores_per_container, 1)):
+        chunk = results[i : i + cores_per_container]
+        billed += cores_per_container * (max(r["seconds"] for r in chunk) + CONTAINER_OVERHEAD_S)
     return billed * USD_PER_CORE_S, core_s
 
 
@@ -57,7 +65,7 @@ class ModalRunner:
     def run(self, jobs: list[dict]) -> list[dict]:
         chunks = [jobs[i : i + self.cores_per_container] for i in range(0, len(jobs), self.cores_per_container)]
         out: list[dict] = []
-        for res in self.fn.map(chunks, order_outputs=False, return_exceptions=True):
+        for res in self.fn.map(chunks, order_outputs=True, return_exceptions=True):
             if isinstance(res, Exception):
                 out.append({"ok": False, "error": f"container failed: {type(res).__name__}: {res}"[:300], "scores": [], "best_score": None,
                             "best_solution": None, "seconds": 0.0, "meta": {}, "seed": None})

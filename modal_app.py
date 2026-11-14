@@ -45,7 +45,10 @@ if (ROOT / "dashboard" / "index.html").exists():
 runs = modal.Volume.from_name("ante-runs", create_if_missing=True)
 
 
-@app.function(image=image, cpu=CORES, memory=CORES * 1024, timeout=2 * 3600, max_containers=100)
+# cpu=(CORES, CORES): a hard limit, so a container can never use (and be billed for) more than it asked for;
+# scaledown_window=2: a finished container stops within seconds instead of idling for the default minute.
+# Both were found by reconciling the ledger with Modal's billing report: idle time was two thirds of the first bill.
+@app.function(image=image, cpu=(CORES, CORES), memory=CORES * 1024, timeout=2 * 3600, max_containers=100, scaledown_window=2)
 def work(jobs: list[dict]) -> list[dict]:
     """One worker container: run up to CORES seeds of one strategy in parallel processes. No network use, no LLM."""
     from ante.core import worker
@@ -74,6 +77,9 @@ def orchestrate(cfg: dict) -> dict:
                     print("volume commit failed:", repr(e))
 
     threading.Thread(target=committer, daemon=True).start()
+    import os
+
+    cfg = {**cfg, "app_id": cfg.get("app_id") or os.environ.get("MODAL_APP_ID", "")}
     config = Config(**cfg)
     loop = Loop(config, ModalRunner(work, cores=CORES, max_workers=100 * CORES), f"/runs/{config.run_id}", on_write=dirty.set)
     try:
@@ -161,6 +167,39 @@ def launch(
     else:
         call = orchestrate.spawn(cfg)
         print("spawned", call.object_id, "- follow it on the dashboard")
+
+
+@app.function(image=image, cpu=(CORES, CORES), memory=8192, timeout=600, scaledown_window=2)
+def bench_container(procs: int, seconds: float = 20.0) -> dict:
+    """How much search does one CORES-core container do with `procs` parallel processes? (Chooses PROCS.)"""
+    import resource
+
+    from ante import problems
+    from ante.core import worker
+
+    out = {}
+    for slug, kernel in (("flat-polynomials", "tabu"), ("kakeya-needle-128", "hop"), ("two-deletion-code-16", "ils")):
+        params = problems.get(slug).kernels()[kernel].resolve({"chain_seconds": seconds})
+        jobs = [{"problem": slug, "kernel": kernel, "params": params, "seed": i, "seconds": seconds, "elites": []} for i in range(procs)]
+        t0 = time.time()
+        res = worker.run_jobs(jobs)
+        work_done = sum(r["meta"].get("steps", 0) + r["meta"].get("hops", 0) + r["meta"].get("iterations", 0) for r in res)
+        out[slug] = {"work": work_done, "wall": round(time.time() - t0, 1), "ok": all(r["ok"] for r in res)}
+    out["max_rss_mb_children"] = round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1)
+    import os
+
+    out["os_cpu_count"] = os.cpu_count()
+    return out
+
+
+@app.local_entrypoint()
+def bench():
+    calls = {n: bench_container.spawn(n) for n in (4, 8, 12)}
+    base = None
+    for n, c in calls.items():
+        r = c.get()
+        base = base or r
+        print(n, "processes:", {k: (v, f"x{v['work'] / max(base[k]['work'], 1):.2f}") if isinstance(v, dict) else v for k, v in r.items()})
 
 
 @app.local_entrypoint()
