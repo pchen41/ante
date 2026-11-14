@@ -80,7 +80,7 @@ class FlatPolynomials(Problem):
             best_solution = {"coefficients": [int(v) for v in best_c]}
             best_score = exact.sup_score(best_c)
         start_score = exact.sup_score(c0) if use_c0 else None
-        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"steps": steps, "params": p}, start_score)
+        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"steps": steps, "params": p, "started_from_known": len(scores) if use_c0 else 0, "improved_on_start": int(sum(v < start_level - 1e-6 for v in scores)) if use_c0 else 0}, start_score)
 
     def exact_score(self, solution: dict) -> float:
         return exact.grid_score(solution["coefficients"])

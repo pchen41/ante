@@ -17,7 +17,9 @@ How the system works:
 - You do not run searches. You file STRATEGIES: a search kernel, parameter settings, and a falsifiable hypothesis about why this strategy will reach a better score than existing ones.
 - Every new strategy first gets a small pilot. From the pilot's attempt outcomes the system estimates the strategy's PRICE: the expected dollars of compute until it beats the record (tail extrapolation for continuous scores, success counting for integer scores).
 - A budget allocator then funds the strategies with the best chance of a record per dollar. Before each run a forecast is written down; afterwards a referee scores it.
-- Your own forecasts (p_record) are scored the same way, so be calibrated: most pilots do not lead to records, and probabilities like 0.001 are legitimate answers.
+- Your p_record for a strategy sets its OPENING PRICE (1 / p_record dollars to a record). The price then rises by $2 for every $1 the strategy spends without a record, and a tail fit can raise it further but never lower it. Strategies that have never beaten a record cannot be told apart by the data alone, so your ratings are what directs the money among them. You may re-rate any live strategy each cycle as evidence comes in.
+- Your ratings are scored by the referee against what happens, and a rater whose promised records do not arrive is discounted, so be calibrated: most strategies never produce a record, and probabilities like 0.001 are legitimate answers.
+- The strongest evidence short of a record is CLIMBING: attempts that started from a known solution and ended strictly better than it ("improved N of M starts"). A strategy that turns a 225 into a 226 is doing the thing that would turn a 226 into a 227.
 
 What makes a good proposal:
 - It tests a distinct mechanism (a different starting point, neighbourhood, acceptance rule, time scale), not a cosmetic tweak, unless the evidence shows a strategy is close and needs tuning.
@@ -46,8 +48,14 @@ PROPOSE_SCHEMA = {
             },
         },
         "retire": {"type": "array", "items": {"type": "string"}, "description": "sids of strategies that should get no more compute"},
+        "ratings": {
+            "type": "array",
+            "description": "your current probability, for each live strategy you have a view on, that $1 more compute on it beats the record",
+            "items": {"type": "object", "properties": {"sid": {"type": "string"}, "p_record": {"type": "number"}, "why": {"type": "string"}},
+                      "required": ["sid", "p_record", "why"], "additionalProperties": False},
+        },
     },
-    "required": ["proposals", "retire"],
+    "required": ["proposals", "retire", "ratings"],
     "additionalProperties": False,
 }
 
@@ -90,8 +98,12 @@ class PI:
         import numpy as np
 
         rows = []
-        for s in market.strategies.values():
-            if s.problem != slug:
+        mine = [s for s in market.strategies.values() if s.problem == slug]
+        retired = [s for s in mine if s.retired]
+        if len(retired) > 8:  # keep the prompt bounded on long runs: old retired strategies collapse to one line
+            rows.append("- retired earlier (no more compute): " + ", ".join(f"{s.sid} ({s.kernel}, best {_fmt(s.best, 9)})" for s in retired[:-8]))
+        for s in mine:
+            if s.retired and s in retired[:-8]:
                 continue
             spec = problem.kernels()[s.kernel]
             defaults = spec.resolve({})
@@ -100,8 +112,12 @@ class PI:
             if att:
                 q = np.quantile(att, [0.99, 0.9, 0.5] if problem.maximize else [0.01, 0.1, 0.5])
                 price = market.price_event(s)
-                ev = (f"attempts={s.n_attempts()} top1%={_fmt(float(q[0]), 9)} top10%={_fmt(float(q[1]), 9)} median={_fmt(float(q[2]), 9)} "
-                      f"best={_fmt(s.best, 12)} spent=${s.cost_usd:.3f} price_usd_to_record={_fmt(price['usd_to_record'], 3) if price['usd_to_record'] is not None else 'unreachable'} "
+                climb = f"improved on its start in {s.improved} of {s.started} attempts; " if s.started else ""
+                if s.ladder:
+                    rungs = ", ".join(f"from {k}: {v[1]}/{v[0]}" for k, v in sorted(s.ladder.items(), key=lambda kv: float(kv[0])))
+                    climb += f"ladder (start score: improved/started) {rungs}; "
+                ev = (climb + f"attempts={s.n_attempts()} top1%={_fmt(float(q[0]), 9)} top10%={_fmt(float(q[1]), 9)} median={_fmt(float(q[2]), 9)} "
+                      f"best={_fmt(s.best, 12)} spent=${s.cost_usd:.3f} your_rating={_fmt(s.rating if s.rating is not None else s.prior.get('p_record'), 3)} price_usd_to_record={_fmt(price['usd_to_record'], 3) if price['usd_to_record'] is not None else 'unreachable'} "
                       f"P(attempt hits record)={_fmt(price['p_attempt'], 2)} model={price['model']}")
             else:
                 ev = "no pilot yet"
@@ -112,7 +128,7 @@ class PI:
         ps = market.problems[slug]
         direction = "maximise" if ps.maximize else "minimise"
         kernels = "\n\n".join(k.describe() for k in problem.kernels().values())
-        lessons = "\n".join(f"- {t}" for t in (self.lessons.get(slug, []) + self.lessons.get("global", []))[-14:]) or "(none yet)"
+        lessons = "\n".join(f"- {t}" for t in (self.lessons.get(slug, []) + self.lessons.get("global", []))[-24:]) or "(none yet)"
         return (
             f"PROBLEM `{slug}` ({direction}): {problem.brief()}\n\n"
             f"Record to beat: {ps.record!r}. Score needed for first place: {ps.target!r}. Our best so far: {_fmt(ps.best, 15)}.\n\n"
@@ -129,7 +145,8 @@ class PI:
             f"(roughly {pilot_usd / 0.0000153:.0f} core-seconds, spread over at least 8 parallel workers), so a strategy whose single "
             "attempt takes minutes yields only a handful of attempts and is priced poorly; prefer attempts short enough to give 30 or more "
             "per pilot unless the evidence says long chains are the point. "
-            "Also list any strategies to retire (only ones whose evidence shows they cannot reach the record)."
+            "Also list any strategies to retire (only ones whose evidence shows they cannot reach the record), and give your current "
+            "rating for every live strategy whose evidence has changed your view."
         )
         out = self.llm.json("propose", self.model, SYSTEM, user, PROPOSE_SCHEMA, effort=self.effort)
         new = []
@@ -153,6 +170,12 @@ class PI:
             market.add(s)
             self.ledger.append("strategy", **s.public())
             new.append(s)
+        for r in out.get("ratings", []):
+            t = market.strategies.get(r["sid"])
+            if t and t.problem == slug and not t.retired:
+                old = t.rating if t.rating is not None else t.prior.get("p_record")
+                t.rating = float(min(max(r["p_record"], 0.0), 1.0))
+                self.ledger.append("rating", sid=t.sid, problem=slug, p_record=t.rating, previous=old, why=r["why"], proposer=self.model)
         for sid in out.get("retire", []):
             s = market.strategies.get(sid)
             if s and s.problem == slug and not s.retired:

@@ -202,7 +202,7 @@ class Quote:
         return float(self.p_within_samples(usd).mean())
 
 
-PRIOR_USD_TO_TARGET = 20.0  # before any evidence, no strategy is assumed cheaper than this
+PRIOR_USD_TO_TARGET = 200.0  # default opening price; the loop passes each strategy's own (set by the PI's rating)
 MIN_ATTEMPTS_FOR_TAIL_FIT = 30
 
 

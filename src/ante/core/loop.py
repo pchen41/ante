@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import time
+import traceback
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -67,6 +68,7 @@ class Config:
     live_arena: bool = True
     seed: int = 0
     note: str = ""
+    carry_from: list[str] = field(default_factory=list)  # earlier run ids whose lessons this run starts with
     app_id: str = ""  # Modal app that ran this (for reconciling estimated cost with the bill)
 
 
@@ -90,6 +92,7 @@ class Loop:
         self.n_cards = 0
         self.cycle = 0
         self.pending_reflection: dict[str, list[dict]] = {}
+        self.carried: list[Strategy] = []
         self.t0 = time.time()
 
     # ---- helpers ----------------------------------------------------------------------------
@@ -129,6 +132,37 @@ class Loop:
                 self.ledger.append("strategy", **s.public())
                 new.append(s)
         return new
+
+    def _carry_over(self) -> None:
+        """Start with what earlier runs learned: their lessons, and every strategy that improved on a known solution."""
+        for run_id in self.cfg.carry_from:
+            path = self.dir.parent / run_id / "ledger.jsonl"
+            if not path.exists():
+                self.ledger.append("note", text=f"Could not carry lessons over from run {run_id}: no ledger found.")
+                continue
+            events = list(Ledger(path).events())
+            strategies = {e["sid"]: e for e in events if e["type"] == "strategy"}
+            n = 0
+            for e in events:
+                if e["type"] == "lesson" and e.get("problem") in self.cfg.problems and self.pi:
+                    self.pi.lessons.setdefault(e["problem"], []).append(f"[run {run_id}] {e['text']}")
+                    n += 1
+                if e["type"] == "candidate" and e.get("problem") in self.cfg.problems and "public" in str(e.get("lineage", "")):
+                    st = strategies.get(e["sid"])
+                    if not st or st.get("source") != "pi":
+                        continue
+                    p = registry.get(e["problem"])
+                    params = p.kernels()[st["kernel"]].resolve(st["params"])
+                    if self.market.is_duplicate(e["problem"], st["kernel"], params):
+                        continue
+                    carried = Strategy(self.market.new_sid(), e["problem"], st["kernel"], params, st["hypothesis"],
+                                       rationale=f"carried over from run {run_id}, where it turned a known solution into a new one scoring {e['score']!r}",
+                                       source="carried", proposer=st.get("proposer", "?"), prior=st.get("prior") or {})
+                    self.market.add(carried)
+                    self.carried.append(carried)
+                    self.ledger.append("strategy", **carried.public())
+                    n += 1
+            self.ledger.append("note", text=f"Carried {n} lessons and proven strategies over from run {run_id}.")
 
     # ---- cards ------------------------------------------------------------------------------
     def _plan_card(self, s: Strategy, stage: str, budget_usd: float) -> dict:
@@ -175,6 +209,12 @@ class Loop:
         for r in results:
             if r.get("start_score") is not None and (s.start_score is None or st.better(r["start_score"], s.start_score)):
                 s.start_score = float(r["start_score"])
+            s.started += int(r.get("meta", {}).get("started_from_known", 0) or 0)
+            s.improved += int(r.get("meta", {}).get("improved_on_start", 0) or 0)
+            for level, (n_started, n_improved) in (r.get("meta", {}).get("ladder") or {}).items():
+                rung = s.ladder.setdefault(level, [0, 0])
+                rung[0] += int(n_started)
+                rung[1] += int(n_improved)
         s.cost_usd += cost
         s.core_seconds += core_s
         s.cards += 1
@@ -256,43 +296,61 @@ class Loop:
         cfg = self.cfg
         self.ledger.append("run_start", run_id=cfg.run_id, budget_usd={"compute": cfg.compute_budget_usd, "llm": cfg.llm_budget_usd}, problems=cfg.problems,
                            config={**asdict(cfg), "runner": self.runner.name})
+        self._carry_over()
         reason = "max cycles reached"
+        failures = 0
         for self.cycle in range(cfg.max_cycles):
-            self.ledger.append("cycle", n=self.cycle, phase="start", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
-            self._snapshot()
-
-            # 2-3. new strategies and their pilots
-            new = self._seed_strategies() if self.cycle == 0 else []
-            if self.pi and self.cycle > 0:
-                for slug in cfg.problems:
-                    new += self.pi.propose(self.market, registry.get(slug), slug, cfg.proposals_per_problem, cfg.pilot_usd)
-            pilots = [(s, "pilot", cfg.pilot_usd) for s in new]
-            if pilots and self.budget_left() > cfg.pilot_usd * len(pilots):
-                self._run_cards(pilots)
-
-            # 4-5. price everything and fund the best chances per dollar
-            tranche = min(cfg.tranche_usd, self.budget_left())
-            if tranche > 0.2 * cfg.tranche_usd:
-                table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd)
-                names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
-                self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(),
-                                   note=f"Funded {names}: highest sampled chance of a record (plus {int(100 * 0.05)}% weight on improving our own best) per equal share of the tranche.")
-                self._run_cards([(s, "scale", usd) for s, usd in chosen])
-
-            # 6. reflection
-            if self.pi:
-                for slug, recent in list(self.pending_reflection.items()):
-                    self.pi.reflect(self.market, registry.get(slug), slug, recent)
-                self.pending_reflection = {}
-
-            self.ledger.append("cycle", n=self.cycle, phase="end", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
-            if self.budget_left() < max(cfg.pilot_usd, 0.05 * cfg.compute_budget_usd):
+            try:
+                self._cycle()
+                failures = 0
+            except Exception as e:  # an unattended run must survive one bad cycle
+                failures += 1
+                self.ledger.append("note", text=f"Cycle {self.cycle} failed with {type(e).__name__}: {e}. " + traceback.format_exc()[-600:])
+                if failures >= 3:
+                    reason = "three consecutive cycles failed"
+                    break
+                time.sleep(20)
+            if self.budget_left() < max(cfg.pilot_usd, 0.03 * cfg.compute_budget_usd):
                 reason = "compute budget spent"
                 break
             if time.time() - self.t0 > cfg.max_wall_seconds:
                 reason = "wall-clock limit reached"
                 break
+        self._finish(reason)
 
+    def _cycle(self) -> None:
+        cfg = self.cfg
+        self.ledger.append("cycle", n=self.cycle, phase="start", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
+        self._snapshot()
+
+        # 2-3. new strategies and their pilots
+        new = (self._seed_strategies() + self.carried) if self.cycle == 0 else []
+        if self.pi and self.cycle > 0:
+            for slug in cfg.problems:
+                new += self.pi.propose(self.market, registry.get(slug), slug, cfg.proposals_per_problem, cfg.pilot_usd)
+        pilots = [(s, "pilot", cfg.pilot_usd) for s in new]
+        if pilots and self.budget_left() > cfg.pilot_usd * len(pilots):
+            self._run_cards(pilots)
+
+        # 4-5. price everything and fund the best chances per dollar
+        tranche = min(cfg.tranche_usd, self.budget_left())
+        if tranche > 0.2 * cfg.tranche_usd:
+            table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd)
+            names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
+            self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(),
+                               note=f"Funded {names}: highest sampled chance of a record per equal share of the tranche (improving our own best only breaks ties).")
+            self._run_cards([(s, "scale", usd) for s, usd in chosen])
+
+        # 6. reflection
+        if self.pi:
+            for slug, recent in list(self.pending_reflection.items()):
+                self.pi.reflect(self.market, registry.get(slug), slug, recent)
+            self.pending_reflection = {}
+
+        self.ledger.append("cycle", n=self.cycle, phase="end", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
+
+    def _finish(self, reason: str) -> None:
+        cfg = self.cfg
         # 7. final verification of our best on every problem (independent + sandbox + audit + provenance)
         for slug, st in self.market.problems.items():
             if st.best_sha:

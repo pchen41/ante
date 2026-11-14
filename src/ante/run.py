@@ -42,13 +42,14 @@ def main() -> None:
     ap.add_argument("--sandbox", action="store_true", help="also run the official verifier in a Modal Sandbox")
     ap.add_argument("--offline", action="store_true", help="use the arena snapshot instead of live leaderboards")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--carry-from", default="", help="comma-separated earlier run ids (in the same --out folder) whose lessons and proven strategies to start with")
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
     load_env()
     cfg = Config(
         run_id=a.run_id, problems=a.problems.split(","), compute_budget_usd=a.compute_usd, llm_budget_usd=a.llm_usd, max_cycles=a.cycles,
         pilot_usd=a.pilot_usd, pilot_seconds=a.pilot_seconds, tranche_usd=a.tranche_usd, scale_seconds=a.scale_seconds, fund_k=a.fund_k,
-        proposals_per_problem=a.proposals, pi_model=a.pi_model, use_pi=not a.no_pi, max_card_seconds=a.max_card_seconds, min_pilot_workers=a.min_pilot_workers, sandbox_verify=a.sandbox, live_arena=not a.offline, seed=a.seed,
+        proposals_per_problem=a.proposals, pi_model=a.pi_model, use_pi=not a.no_pi, max_card_seconds=a.max_card_seconds, min_pilot_workers=a.min_pilot_workers, sandbox_verify=a.sandbox, live_arena=not a.offline, seed=a.seed, carry_from=[r for r in a.carry_from.split(",") if r],
     )
     out = Path(a.out) / a.run_id
     Loop(cfg, LocalRunner(a.processes), out).run()

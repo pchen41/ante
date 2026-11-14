@@ -56,6 +56,7 @@ class KakeyaNeedle(Problem):
         best = None
         hops = 0
         start_score = None
+        started = improved = 0
         while True:
             left = seconds - (time.time() - t0)
             if left < 2.0 or (scores and left < 0.5 * p["chain_seconds"]):
@@ -85,6 +86,9 @@ class KakeyaNeedle(Problem):
             new = [(a, i) for i, (_, a) in enumerate(r.attempts) if all(abs(a - k) > 1e-12 for k in known)]
             outcome = min(new)[0] if new else None
             cand = r.best
+            if start != "random":
+                started += 1
+                improved += outcome is not None and outcome < r.start.area - 1e-12
             if outcome is not None:
                 scores.append(float(outcome))
             if best is None or cand.area < best.area:
@@ -94,7 +98,7 @@ class KakeyaNeedle(Problem):
             strings = S.offsets_to_strings(best.x)
             best_solution = {"offsets": strings}
             best_score = float(exact.exact_area(strings))
-        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"hops": hops, "params": p}, start_score)
+        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"hops": hops, "params": p, "started_from_known": int(started), "improved_on_start": int(improved)}, start_score)
 
     def exact_score(self, solution: dict) -> float:
         return float(exact.exact_area(solution["offsets"]))

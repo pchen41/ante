@@ -93,11 +93,11 @@ def test_small_samples_are_not_optimistic():
 
 
 def test_unproven_strategy_starts_at_the_sceptical_price_and_gets_dearer_with_failures():
-    q0 = pricing.quote([226.0] * 2, maximize=True, target=227.0, cost_per_attempt=0.001)
-    q1 = pricing.quote([226.0] * 20000, maximize=True, target=227.0, cost_per_attempt=0.001)
+    q0 = pricing.quote([226.0] * 2, maximize=True, target=227.0, cost_per_attempt=0.001, prior_usd=20.0)
+    q1 = pricing.quote([226.0] * 20000, maximize=True, target=227.0, cost_per_attempt=0.001, prior_usd=20.0)
     assert q0.model == q1.model == "beta"
-    assert 10.0 < q0.usd_to_target < 40.0  # about PRIOR_USD_TO_TARGET
-    assert 40.0 < q1.usd_to_target < 90.0  # about prior + 2 * $20 spent
+    assert 10.0 < q0.usd_to_target < 40.0  # about the opening price
+    assert 40.0 < q1.usd_to_target < 90.0  # about opening price + 2 * $20 spent
 
 
 def test_tail_fit_can_only_make_a_record_look_more_expensive():
@@ -108,6 +108,7 @@ def test_tail_fit_can_only_make_a_record_look_more_expensive():
     q = pricing.quote(x, maximize=False, target=wall - 1e-9, cost_per_attempt=3e-4)
     assert q.model == "gpd"
     assert q.usd_to_target >= 0.9 * (pricing.PRIOR_USD_TO_TARGET + 2 * 400 * 3e-4)
+    assert pricing.quote(x, maximize=False, target=wall - 1e-9, cost_per_attempt=3e-4, prior_usd=20.0).usd_to_target >= 0.9 * 20.0
     hopeless = pricing.quote(x + 0.01, maximize=False, target=wall - 1e-9, cost_per_attempt=3e-4)
     assert hopeless.usd_to_target > 100 * q.usd_to_target
 

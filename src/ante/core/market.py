@@ -13,7 +13,9 @@ import numpy as np
 
 from . import pricing
 
-LAMBDA_NEW_BEST = 0.05  # weight of "improves our own best" relative to "sets a record" in the allocator
+LAMBDA_NEW_BEST = 0.002  # tie-breaker: "improves our own best" counts for 1/500 of "sets a record"
+DEFAULT_RATING = 0.005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $200
+RATING_BOUNDS = (1.0 / 5000.0, 1.0 / 10.0)  # opening prices are kept between $10 and $5,000
 RECENT_CARDS = 3  # a strategy is priced on its most recent cards (its starting pool drifts as elites improve)
 
 
@@ -39,6 +41,10 @@ class Strategy:
     cost_usd: float = 0.0
     best: float | None = None
     start_score: float | None = None  # best known solution its workers started from (None = from scratch)
+    started: int = 0  # attempts that began from a known solution ...
+    improved: int = 0  # ... and how many of them ended strictly better than it
+    rating: float | None = None  # the PI's current P(record per $1); sets the opening price
+    ladder: dict = field(default_factory=dict)  # start score -> [attempts started there, attempts that ended strictly better]
     cards: int = 0
     funded: int = 0  # number of scale cards
     retired: bool = False
@@ -52,6 +58,12 @@ class Strategy:
     def cost_per_attempt(self) -> float:
         n = self.n_attempts()
         return self.cost_usd / n if n else float("inf")
+
+    def opening_price(self, trust: float = 1.0) -> float:
+        """Dollars to a record assumed before counting this strategy's own failures: 1 / (rated P(record per $1))."""
+        r = self.rating if self.rating is not None else (self.prior.get("p_record") or DEFAULT_RATING)
+        r = min(max(float(r) * trust, RATING_BOUNDS[0]), RATING_BOUNDS[1])
+        return 1.0 / r
 
     def public(self) -> dict:
         return {k: getattr(self, k) for k in ("sid", "problem", "kernel", "params", "hypothesis", "rationale", "source", "proposer", "parent", "prior")}
@@ -155,7 +167,8 @@ class Market:
         att, cpa = s.attempts(), s.cost_per_attempt()
         seed = int(self.rng.integers(1 << 31))
         xi0 = self.xi_prior(s.problem)
-        q_rec = pricing.quote(att, ps.maximize, ps.target, cpa, seed=seed, xi_prior=xi0, integer=ps.integer)
+        q_rec = pricing.quote(att, ps.maximize, ps.target, cpa, seed=seed, xi_prior=xi0, integer=ps.integer,
+                              prior_usd=s.opening_price(self.calibration.trust("prior", "record")))
         if q_rec.fit is not None and q_rec.fit.n * q_rec.fit.q0 >= pricing.MIN_EXCEEDANCES_FOR_SHAPE:
             self.shapes.setdefault(s.problem, {})[s.sid] = q_rec.fit.xi
         # "new best" = better than our best so far AND better than what the strategy started from
@@ -193,6 +206,7 @@ class Market:
         fit = q.fit
         return {
             "sid": s.sid, "problem": s.problem, "model": q.model, "n_attempts": s.n_attempts(), "cost_per_attempt": s.cost_per_attempt(),
+            "opening_price_usd": s.opening_price(self.calibration.trust("prior", "record")), "started_from_known": s.started, "improved_on_start": s.improved,
             "p_attempt": q.p_attempt, "p_lo": q.p_lo, "p_hi": q.p_hi, "usd_to_record": _finite(q.usd_to_target),
             "xi": fit.xi if fit else None, "sigma": fit.sigma if fit else None,
             "u": (fit.u if self.problems[s.problem].maximize else -fit.u) if fit else None,

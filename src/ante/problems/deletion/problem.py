@@ -84,6 +84,8 @@ class DeletionCode(Problem):
         scores: list[float] = []
         best = None
         start_score = None
+        started = improved = 0
+        ladder: dict[str, list[int]] = {}
         meta: dict = {"params": p}
         if kernel_name == "ils":
             p["ruin_max"] = max(p["ruin_max"], p["ruin_min"])
@@ -101,6 +103,12 @@ class DeletionCode(Problem):
                 r = s.run(min(p["chain_seconds"], left), trace_every=1e9)
                 iters += r["iterations"]
                 scores.append(float(r["best"]))
+                if x0 is not None:
+                    started += 1
+                    improved += r["best"] > len(x0)
+                    rung = ladder.setdefault(str(len(x0)), [0, 0])
+                    rung[0] += 1
+                    rung[1] += int(r["best"] > len(x0))
                 if best is None or r["best"] > len(best):
                     best = s.best_ints()
             meta["iterations"] = iters
@@ -128,13 +136,18 @@ class DeletionCode(Problem):
                 if out["status"] == "skipped":
                     continue
                 proven += bool(out.get("proven_no_gain"))
+                started += 1
                 if out.get("gain", 0) > 0:
+                    improved += 1
                     code = np.asarray(out["new_code"], dtype=np.int64)
                 scores.append(float(len(code)))
             best = code
             meta["windows_proven_no_gain"] = proven
             meta["windows_skipped_too_large"] = int(skipped)
             meta["windows_hit_time_limit"] = int(timed_out)
+        meta["started_from_known"], meta["improved_on_start"] = int(started), int(improved)
+        if ladder:
+            meta["ladder"] = ladder
         best_solution = best_score = None
         if best is not None:
             words = ints_to_words(np.sort(np.asarray(best)), t.n)

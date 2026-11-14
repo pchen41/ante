@@ -14,11 +14,12 @@ own units (the number the arena would report). Dollar amounts are USD.
 | `strategy` | a new search strategy is proposed | `sid`, `problem`, `kernel`, `params: {...}`, `hypothesis`, `rationale`, `source: "seed" \| "pi"`, `proposer` (model name or `"seed"`), `parent: sid \| null`, `prior: {p_record, expected_best}` (the proposer's own forecast for a standard tranche; may be null) |
 | `card` | **before** compute is spent | `cid`, `sid`, `problem`, `stage: "pilot" \| "scale"`, `workers`, `seconds`, `budget_usd`, `forecast: {source: "prior" \| "tail-fit" \| "beta", p_new_best, p_record, best_q10, best_q50, best_q90}` |
 | `result` | a card finishes | `cid`, `sid`, `problem`, `attempts`, `best` (best score of the card, by the kernel), `quantiles: {q01, q10, q50}` of attempt outcomes, `cost_usd`, `wall_seconds`, `core_seconds`, `new_best: bool`, `beat_record: bool`, `error: str \| null` |
-| `price` | after each result | `sid`, `problem`, `model: "gpd" \| "beta"`, `n_attempts`, `cost_per_attempt`, `p_attempt`, `p_lo`, `p_hi`, `usd_to_record`, `xi`, `sigma`, `u` |
+| `price` | after each result | `sid`, `problem`, `model: "gpd" \| "beta"`, `n_attempts`, `cost_per_attempt`, `p_attempt`, `p_lo`, `p_hi`, `usd_to_record`, `opening_price_usd`, `started_from_known`, `improved_on_start` (attempts that began from a known solution, and how many ended strictly better), `xi`, `sigma`, `u` |
 | `referee` | after each result | `cid`, `sid`, `forecast` (copy of the card's), `outcome: {new_best, beat_record, best}`, `brier_new_best`, `brier_record`, `in_interval: bool` (was `best` inside [q10, q90]?), `surprise` (0 = as expected, larger = more surprising) |
 | `allocation` | each cycle, before scale cards | `cycle`, `budget_left_usd`, `tranche_usd`, `table: [{sid, problem, model, usd_to_record, p_record_tranche, p_new_best_tranche, draw, trust, trust_new_best, chosen: bool, budget_usd}]`, `calibration: {"source:event": {n, forecast_sum, observed, trust}}`, `note` |
 | `candidate` | a card produced a new best for a problem | `problem`, `score`, `cid`, `sid`, `solution_sha`, `path` |
 | `verification` | each check of a candidate | `problem`, `solution_sha`, `check: "independent" \| "official-sandbox" \| "audit" \| "provenance"`, `ok: bool`, `score`, `detail` |
+| `rating` | the PI re-rates a live strategy | `sid`, `problem`, `p_record` (its probability that $1 more compute beats the record; sets the opening price `1 / p_record`), `previous`, `why`, `proposer` |
 | `lesson` | the PI reflects on results | `problem` (or `"global"`), `text`, `evidence: [cid]`, `proposer` |
 | `llm_call` | every model call | `purpose`, `model`, `tokens_in`, `tokens_out`, `cost_usd`, `seconds` |
 | `note` | free-text narration of a decision | `text` |
