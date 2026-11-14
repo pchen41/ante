@@ -923,6 +923,11 @@ function applyPrice(st, ev) {
   if (band) txt += ', band ' + esc(band);
   if (s.prevPrice) txt += ' (was ' + esc(fmtPrice(s.prevPrice.usd)) + ')';
   txt += '.';
+  var nStart = fin(ev.started_from_known), nImp = fin(ev.improved_on_start);
+  if (nStart !== null && nStart > 0) {
+    s.climb = {started: nStart, improved: nImp === null ? 0 : nImp};
+    txt += ' Improved on its starting solution in ' + esc(fmtInt(s.climb.improved)) + ' of ' + esc(fmtInt(nStart)) + ' attempts.';
+  }
   if (s.lastResultEntry !== null && !s.lastResultHasPrice && st.log[s.lastResultEntry]) {
     var e = st.log[s.lastResultEntry];
     e.html += ' ' + txt;
@@ -1077,6 +1082,20 @@ function applyLesson(st, ev) {
   addEntry(st, ev, 'insight', 'LESSON', known ? slug : null, html, null);
 }
 
+function applyRating(st, ev) {
+  var s = getStrategy(st, ev.sid, ev.problem);
+  var p = fin(ev.p_record), prev = fin(ev.previous);
+  s.rating = p;
+  var html = '<b>Rating</b> for ' + sName(st, s.sid, s.problem) + ': the researcher model puts the chance that $1 more compute beats the record at <b>' +
+    esc(fmtProb(p)) + '</b>';
+  if (p !== null && p > 0) html += ' (opening price ' + esc(fmtPrice(1 / p)) + ')';
+  if (prev !== null) html += ', was ' + esc(fmtProb(prev));
+  html += '.';
+  if (!isNil(ev.why) && ev.why !== '') html += ' ' + esc(clip(str(ev.why), 600));
+  if (!isNil(ev.proposer) && ev.proposer !== '') html += ' <span class="tiny">by ' + esc(str(ev.proposer)) + '</span>';
+  addEntry(st, ev, 'insight', 'RATING', s.problem, html, null);
+}
+
 function applyLlm(st, ev) {
   var cost = usd0(ev.cost_usd);
   var purpose = str(ev.purpose, '') || '(unspecified)';
@@ -1131,6 +1150,7 @@ function applyEvent(st, ev, type) {
     case 'candidate': applyCandidate(st, ev); break;
     case 'verification': applyVerification(st, ev); break;
     case 'lesson': applyLesson(st, ev); break;
+    case 'rating': applyRating(st, ev); break;
     case 'llm_call': applyLlm(st, ev); break;
     case 'note': applyNote(st, ev); break;
     case 'cycle': applyCycle(st, ev); break;
