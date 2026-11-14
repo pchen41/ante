@@ -38,6 +38,7 @@ class Strategy:
     core_seconds: float = 0.0
     cost_usd: float = 0.0
     best: float | None = None
+    start_score: float | None = None  # best known solution its workers started from (None = from scratch)
     cards: int = 0
     funded: int = 0  # number of scale cards
     retired: bool = False
@@ -62,6 +63,7 @@ class ProblemState:
     maximize: bool
     record: float
     target: float
+    integer: bool = False
     best: float | None = None  # best independently checked score from our own cards
     best_sha: str | None = None
     elites: list[tuple[float, str, dict]] = field(default_factory=list)  # (score, canonical key, solution), best first
@@ -86,10 +88,12 @@ class ProblemState:
 
 
 class Calibration:
-    """Multiplicative recalibration of forecast probabilities, learned per forecast source.
+    """Multiplicative recalibration of forecast probabilities, learned per (forecast source, event).
 
-    If a source's forecasts of "new best" have summed to F while the event happened O times, future
-    forecasts from that source are multiplied by (O + 1) / (F + 1), clipped to [0.2, 5].
+    If a source's forecasts of an event ("new best" or "record") have summed to F while the event
+    happened O times, future forecasts of that event from that source are multiplied by
+    (O + 1) / (F + 1), clipped to [0.01, 5]. A source that keeps promising records that do not come
+    is discounted by up to 100x; one that keeps being surprised by successes is boosted.
     """
 
     def __init__(self):
@@ -97,17 +101,22 @@ class Calibration:
         self.sum_o: dict[str, float] = {}
         self.n: dict[str, int] = {}
 
-    def update(self, source: str, forecast_p: float, happened: bool) -> None:
-        self.sum_f[source] = self.sum_f.get(source, 0.0) + float(forecast_p)
-        self.sum_o[source] = self.sum_o.get(source, 0.0) + float(bool(happened))
-        self.n[source] = self.n.get(source, 0) + 1
+    def update(self, source: str, event: str, forecast_p: float, happened: bool) -> None:
+        k = f"{source}:{event}"
+        self.sum_f[k] = self.sum_f.get(k, 0.0) + float(forecast_p)
+        self.sum_o[k] = self.sum_o.get(k, 0.0) + float(bool(happened))
+        self.n[k] = self.n.get(k, 0) + 1
 
-    def trust(self, source: str) -> float:
-        r = (self.sum_o.get(source, 0.0) + 1.0) / (self.sum_f.get(source, 0.0) + 1.0)
-        return float(min(max(r, 0.2), 5.0))
+    def trust(self, source: str, event: str) -> float:
+        k = f"{source}:{event}"
+        r = (self.sum_o.get(k, 0.0) + 1.0) / (self.sum_f.get(k, 0.0) + 1.0)
+        return float(min(max(r, 0.01), 5.0))
 
-    def apply(self, source: str, p: float) -> float:
-        return float(min(max(p * self.trust(source), 0.0), 1.0))
+    def apply(self, source: str, event: str, p: float) -> float:
+        return float(min(max(p * self.trust(source, event), 0.0), 1.0))
+
+    def table(self) -> dict:
+        return {k: {"n": self.n[k], "forecast_sum": round(self.sum_f[k], 4), "observed": self.sum_o[k], "trust": round(self.trust(*k.split(":")), 4)} for k in self.n}
 
 
 class Market:
@@ -146,15 +155,19 @@ class Market:
         att, cpa = s.attempts(), s.cost_per_attempt()
         seed = int(self.rng.integers(1 << 31))
         xi0 = self.xi_prior(s.problem)
-        q_rec = pricing.quote(att, ps.maximize, ps.target, cpa, seed=seed, xi_prior=xi0)
+        q_rec = pricing.quote(att, ps.maximize, ps.target, cpa, seed=seed, xi_prior=xi0, integer=ps.integer)
         if q_rec.fit is not None and q_rec.fit.n * q_rec.fit.q0 >= pricing.MIN_EXCEEDANCES_FOR_SHAPE:
             self.shapes.setdefault(s.problem, {})[s.sid] = q_rec.fit.xi
-        if ps.best is None:
+        # "new best" = better than our best so far AND better than what the strategy started from
+        bar = ps.best
+        if s.start_score is not None and (bar is None or ps.better(s.start_score, bar)):
+            bar = s.start_score
+        if bar is None:
             q_best = pricing.Quote("none", len(att), cpa, np.ones(1))
         else:
-            eps = 0.5 if float(ps.best).is_integer() and ps.maximize else abs(ps.best) * 1e-12
-            own = ps.best + eps if ps.maximize else ps.best - eps
-            q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0)
+            eps = 0.5 if ps.integer else abs(bar) * 1e-12
+            own = bar + eps if ps.maximize else bar - eps
+            q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0, integer=ps.integer)
         return q_rec, q_best
 
     def forecast(self, s: Strategy, budget_usd: float) -> dict:
@@ -163,15 +176,15 @@ class Market:
         if q_rec.model == "none":
             # no evidence yet: the proposer's prior if it gave one, else the base rate of past pilots
             p_rec = float(s.prior.get("p_record") or 0.0)
-            return {"source": "prior", "p_new_best": None, "p_record": self.calibration.apply("prior", p_rec),
+            return {"source": "prior", "p_new_best": None, "p_record": self.calibration.apply("prior", "record", p_rec),
                     "best_q10": None, "best_q50": s.prior.get("expected_best"), "best_q90": None}
         source = "tail-fit" if q_rec.model == "gpd" else "beta"
         n_future = budget_usd / s.cost_per_attempt() if s.cost_per_attempt() > 0 else 0.0
         qs = pricing.best_of_n_quantiles(s.attempts(), self.problems[s.problem].maximize, n_future, fit=q_rec.fit)
         return {
             "source": source,
-            "p_new_best": self.calibration.apply(source, q_best.p_within(budget_usd)),
-            "p_record": self.calibration.apply(source, q_rec.p_within(budget_usd)),
+            "p_new_best": self.calibration.apply(source, "new_best", q_best.p_within(budget_usd)),
+            "p_record": self.calibration.apply(source, "record", q_rec.p_within(budget_usd)),
             "best_q10": qs[0] if qs else None, "best_q50": qs[1] if qs else None, "best_q90": qs[2] if qs else None,
         }
 
@@ -202,14 +215,14 @@ class Market:
         for s in cands:
             q_rec, q_best = self.quotes(s)
             source = "tail-fit" if q_rec.model == "gpd" else "beta"
-            trust = self.calibration.trust(source)
-            pr = q_rec.p_within_samples(share)
-            pb = q_best.p_within_samples(share)
+            t_rec, t_best = self.calibration.trust(source, "record"), self.calibration.trust(source, "new_best")
+            pr = np.minimum(q_rec.p_within_samples(share) * t_rec, 1.0)
+            pb = np.minimum(q_best.p_within_samples(share) * t_best, 1.0)
             draw = float(self.rng.choice(pr)) + LAMBDA_NEW_BEST * float(self.rng.choice(pb))
             rows.append({
-                "sid": s.sid, "problem": s.problem, "usd_to_record": _finite(q_rec.usd_to_target),
-                "p_record_tranche": float(min(pr.mean() * trust, 1.0)), "p_new_best_tranche": float(min(pb.mean() * trust, 1.0)),
-                "draw": draw * trust, "trust": trust, "chosen": False, "budget_usd": 0.0,
+                "sid": s.sid, "problem": s.problem, "usd_to_record": _finite(q_rec.usd_to_target), "model": source,
+                "p_record_tranche": float(pr.mean()), "p_new_best_tranche": float(pb.mean()),
+                "draw": draw, "trust": t_rec, "trust_new_best": t_best, "chosen": False, "budget_usd": 0.0,
             })
         rows.sort(key=lambda r: -r["draw"])
         chosen = []

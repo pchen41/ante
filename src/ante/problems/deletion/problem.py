@@ -46,11 +46,13 @@ class DeletionCode(Problem):
                 "outcome is the code size after the window (never smaller than the start).",
                 [
                     Knob("start", "choice", "record", choices=["record", "public", "elite"], doc="code to improve"),
-                    Knob("size", "int", 16, 4, 80, doc="codewords released per window"),
+                    Knob("geometry", "choice", "cluster", choices=["cluster", "band"], doc="cluster: release the codewords nearest a random centre; band: release every codeword whose Hamming weight lies in a random run of `band_width` consecutive weights (conflicts only join weights at most 2 apart)"),
+                    Knob("band_width", "int", 2, 1, 5, doc="geometry=band: number of consecutive weights released"),
+                    Knob("size", "int", 16, 4, 120, doc="geometry=cluster: codewords released per window"),
                     Knob("pool_factor", "float", 1.5, 1.0, 4.0, doc="the window is sampled from the pool_factor*size codewords closest to a random centre (1.0 = the closest ones exactly)"),
                     Knob("centre", "choice", "codeword", choices=["codeword", "any"], doc="window centre: a random codeword, or a random word of the whole space"),
-                    Knob("time_limit", "float", 20.0, 2.0, 300.0, doc="solver time limit per window, seconds"),
-                    Knob("max_candidates", "int", 6000, 500, 30000, doc="skip windows whose refill has more candidate words than this"),
+                    Knob("time_limit", "float", 20.0, 2.0, 1500.0, doc="solver time limit per window, seconds"),
+                    Knob("max_candidates", "int", 6000, 500, 40000, doc="skip windows whose refill has more candidate words than this"),
                 ],
             ),
         }
@@ -105,14 +107,24 @@ class DeletionCode(Problem):
         else:
             code = np.asarray(self._pick_start(p["start"], rng, elites, t), dtype=np.int64)
             start_score = float(len(code))
-            proven = 0
+            proven = skipped = timed_out = 0
             while True:
                 left = seconds - (time.time() - t0)
                 if left < 3.0:
                     break
-                centre = int(rng.choice(code)) if p["centre"] == "codeword" else int(rng.integers(t.n_words))
-                rel = W.cluster_window(t, code, centre, p["size"], rng=rng, pool_factor=p["pool_factor"])
+                if p["geometry"] == "band":
+                    lo = int(rng.integers(0, 17 - p["band_width"] + 1))
+                    rel = W.band_window(t, code, lo, lo + p["band_width"] - 1)
+                    if rel.shape[0] == 0:
+                        continue
+                else:
+                    centre = int(rng.choice(code)) if p["centre"] == "codeword" else int(rng.integers(t.n_words))
+                    rel = W.cluster_window(t, code, centre, p["size"], rng=rng, pool_factor=p["pool_factor"])
                 out = W.solve_window(t, code, rel, time_limit=min(p["time_limit"], left - 1.0), max_candidates=p["max_candidates"])
+                skipped += out["status"] == "skipped"
+                timed_out += out["status"] == "limit"
+                if skipped > 200 and not scores:
+                    break  # every window is too large for max_candidates: report nothing rather than spin
                 if out["status"] == "skipped":
                     continue
                 proven += bool(out.get("proven_no_gain"))
@@ -121,6 +133,8 @@ class DeletionCode(Problem):
                 scores.append(float(len(code)))
             best = code
             meta["windows_proven_no_gain"] = proven
+            meta["windows_skipped_too_large"] = int(skipped)
+            meta["windows_hit_time_limit"] = int(timed_out)
         best_solution = best_score = None
         if best is not None:
             words = ints_to_words(np.sort(np.asarray(best)), t.n)

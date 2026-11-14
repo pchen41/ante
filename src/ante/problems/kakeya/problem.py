@@ -29,6 +29,7 @@ class KakeyaNeedle(Problem):
                     Knob("temperature", "float", 1e-6, 1e-9, 1e-3, doc="Metropolis temperature in area units; neighbouring minima are typically 1e-6 to 1e-4 apart"),
                     Knob("patience", "int", 50, 5, 5000, doc="hops without a new chain best before the chain returns to its best arrangement"),
                     Knob("polish_iters", "int", 150, 20, 400, doc="Newton iteration cap per hop"),
+                    Knob("donors", "choice", "all", choices=["all", "own", "none"], doc="which arrangements the crossover move may splice blocks from: public top-5 plus our own best, only our own, or none"),
                 ]
                 + [Knob(f"w_{m}", "float", w, 0.0, 10.0, doc=f"relative frequency of the `{m}` move") for m, w in zip(MOVE_NAMES, [2.0, 1.0, 2.0, 1.0, 1.5, 1.5, 1.0])],
             )
@@ -48,8 +49,9 @@ class KakeyaNeedle(Problem):
         t0 = time.time()
         public = self._arrays([s["data"] for s in self.public_solutions()])
         mine = self._arrays(elites or [])
-        donors = public + mine
+        donors = {"all": public + mine, "own": mine, "none": []}[p["donors"]]
         weights = {m: p[f"w_{m}"] for m in MOVE_NAMES}
+        public_areas = [float(S.area(x)) for x in public]
         scores: list[float] = []
         best = None
         hops = 0
@@ -77,12 +79,12 @@ class KakeyaNeedle(Problem):
             hops += r.steps
             if start != "random" and (start_score is None or r.start.area < start_score):
                 start_score = r.start.area
-            if start == "random":
-                outcome, cand = r.best.area, r.best
-            else:
-                # a chain that starts at a known arrangement only counts for what it newly found
-                new = [a for _, a in r.attempts if abs(a - r.start.area) > 1e-12]
-                outcome, cand = (min(new) if new else None), r.best
+            # a chain only counts for what it newly found: not its own start, and not a public
+            # arrangement that crossover happened to rebuild
+            known = public_areas + ([r.start.area] if start != "random" else [])
+            new = [(a, i) for i, (_, a) in enumerate(r.attempts) if all(abs(a - k) > 1e-12 for k in known)]
+            outcome = min(new)[0] if new else None
+            cand = r.best
             if outcome is not None:
                 scores.append(float(outcome))
             if best is None or cand.area < best.area:
@@ -97,19 +99,35 @@ class KakeyaNeedle(Problem):
     def exact_score(self, solution: dict) -> float:
         return float(exact.exact_area(solution["offsets"]))
 
+    def lineage(self, kernel: str, params: dict) -> str:
+        if params.get("start") == "random" and params.get("donors") == "none":
+            return "from scratch"
+        if params.get("start") == "random" and params.get("donors") == "own":
+            return "from scratch, recombining our own arrangements"
+        return "builds on public solutions (start or crossover donors)"
+
     def canonical(self, solution: dict) -> str:
         xs = exact.parse_offsets(solution["offsets"])
         return ",".join(str(x - xs[0]) for x in xs)
 
     def is_public(self, solution: dict) -> str | None:
-        """Same arrangement as a public solution (up to translation, mirror image and 1e-9 rounding)?"""
+        """Same arrangement as a public solution?
+
+        Two tests. (1) Offsets equal up to translation, mirror image and 1e-9 rounding. (2) Exactly the
+        same area: triangles that are completely covered by the others can slide without changing the
+        union, so one arrangement has many offset vectors; an area that matches a public score to the
+        last float digit is treated as that public arrangement, not as ours.
+        """
         import numpy as np
 
         from .fast import mirror, to_array
 
         x = to_array(solution["offsets"])
         x = x - x[0]
+        score = float(exact.exact_area(solution["offsets"]))
         for s in self.public_solutions():
+            if abs(score - float(s["score"])) <= 1e-13:
+                return s["agentName"]
             y = to_array(s["data"]["offsets"])
             for z in (y, mirror(y)):
                 if float(np.max(np.abs((z - z[0]) - x))) < 1e-9:

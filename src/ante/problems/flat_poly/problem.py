@@ -50,14 +50,15 @@ class FlatPolynomials(Problem):
         use_c0 = start != "random"
         src = self.public_solutions()[0]["data"] if start == "record" else (elites[0] if start == "elite" else None)
         c0 = np.array(src["coefficients"], dtype=np.int8) if use_c0 else np.zeros(kernel.N, dtype=np.int8)
-        chunk = 20_000
+        start_level = kernel.score_from_sq(kernel.fine_sup(c0, wcf, wsf)) if use_c0 else None
+        chunk = max(20_000, int(1.2 * p["restart_after"]))  # at least one episode can finish per call
         scores: list[float] = []
         best_sq, best_c, steps = np.inf, None, 0
         ep_c = np.zeros((chunk // p["restart_after"] + 2, kernel.N), dtype=np.int8)
         ep_m = np.zeros(ep_c.shape[0], dtype=np.float32)
         sup = np.zeros(ep_c.shape[0], dtype=np.float32)
         carry_c, carry = c0, use_c0
-        while time.time() - t0 < seconds:
+        while time.time() - t0 < seconds - 1.0:
             n_ep, used = kernel.tabu_episodes(
                 carry_c, carry, wc, ws, chunk, int(rng.integers(1 << 31)), MODES[p["objective"]], p["p"], p["margin"],
                 p["tenure_lo"], p["tenure_hi"], p["restart_after"], p["kick"], ep_c, ep_m,
@@ -67,7 +68,8 @@ class FlatPolynomials(Problem):
             if n_ep == 0:
                 continue
             kernel.polish_all(ep_c, n_ep, wcf, wsf, 20, sup)
-            scores.extend(kernel.score_from_sq(s) for s in sup[:n_ep])
+            # an episode that only returns the sequence it started from found nothing
+            scores.extend(v for v in (kernel.score_from_sq(s) for s in sup[:n_ep]) if start_level is None or abs(v - start_level) > 1e-6)
             i = int(np.argmin(sup[:n_ep]))
             if sup[i] < best_sq:
                 best_sq, best_c = float(sup[i]), ep_c[i].copy()

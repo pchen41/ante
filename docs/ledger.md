@@ -16,7 +16,7 @@ own units (the number the arena would report). Dollar amounts are USD.
 | `result` | a card finishes | `cid`, `sid`, `problem`, `attempts`, `best` (best score of the card, by the kernel), `quantiles: {q01, q10, q50}` of attempt outcomes, `cost_usd`, `wall_seconds`, `core_seconds`, `new_best: bool`, `beat_record: bool`, `error: str \| null` |
 | `price` | after each result | `sid`, `problem`, `model: "gpd" \| "beta"`, `n_attempts`, `cost_per_attempt`, `p_attempt`, `p_lo`, `p_hi`, `usd_to_record`, `xi`, `sigma`, `u` |
 | `referee` | after each result | `cid`, `sid`, `forecast` (copy of the card's), `outcome: {new_best, beat_record, best}`, `brier_new_best`, `brier_record`, `in_interval: bool` (was `best` inside [q10, q90]?), `surprise` (0 = as expected, larger = more surprising) |
-| `allocation` | each cycle, before scale cards | `cycle`, `budget_left_usd`, `tranche_usd`, `table: [{sid, problem, usd_to_record, p_record_tranche, draw, trust, chosen: bool, workers, seconds}]`, `note` |
+| `allocation` | each cycle, before scale cards | `cycle`, `budget_left_usd`, `tranche_usd`, `table: [{sid, problem, model, usd_to_record, p_record_tranche, p_new_best_tranche, draw, trust, trust_new_best, chosen: bool, budget_usd}]`, `calibration: {"source:event": {n, forecast_sum, observed, trust}}`, `note` |
 | `candidate` | a card produced a new best for a problem | `problem`, `score`, `cid`, `sid`, `solution_sha`, `path` |
 | `verification` | each check of a candidate | `problem`, `solution_sha`, `check: "independent" \| "official-sandbox" \| "audit" \| "provenance"`, `ok: bool`, `score`, `detail` |
 | `lesson` | the PI reflects on results | `problem` (or `"global"`), `text`, `evidence: [cid]`, `proposer` |

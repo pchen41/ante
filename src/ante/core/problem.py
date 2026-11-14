@@ -120,6 +120,10 @@ class Problem:
                 return s["agentName"]
         return None
 
+    def lineage(self, kernel: str, params: dict) -> str:
+        """Does this strategy build on public solutions? Reported with every candidate."""
+        return "from scratch" if params.get("start") in ("random", "scratch") else "builds on public or earlier solutions"
+
     def audit(self, solution: dict) -> dict:
         """Problem-specific checks that a score is not a verifier artefact."""
         return {}

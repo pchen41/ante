@@ -55,18 +55,27 @@ def orchestrate(cfg: dict) -> dict:
     from ante.core.loop import Config, Loop
     from ante.core.runner import ModalRunner
 
-    last = [0.0]
+    import threading
 
-    def on_write() -> None:  # make the ledger visible to the dashboard, at most every 10 s
-        if time.time() - last[0] > 10:
-            last[0] = time.time()
-            runs.commit()
+    dirty, stop = threading.Event(), threading.Event()
 
+    def committer() -> None:  # publish the ledger to the dashboard every few seconds while it changes
+        while not stop.is_set():
+            time.sleep(5)
+            if dirty.is_set():
+                dirty.clear()
+                try:
+                    runs.commit()
+                except Exception as e:
+                    print("volume commit failed:", repr(e))
+
+    threading.Thread(target=committer, daemon=True).start()
     config = Config(**cfg)
-    loop = Loop(config, ModalRunner(work, cores=CORES, max_workers=100 * CORES), f"/runs/{config.run_id}", on_write=on_write)
+    loop = Loop(config, ModalRunner(work, cores=CORES, max_workers=100 * CORES), f"/runs/{config.run_id}", on_write=dirty.set)
     try:
         loop.run()
     finally:
+        stop.set()
         runs.commit()
     return {"run_id": config.run_id, "spent_compute_usd": loop.spent, "spent_llm_usd": loop.llm_spent(),
             "best": {k: v.best for k, v in loop.market.problems.items()}}

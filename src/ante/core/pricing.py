@@ -207,30 +207,36 @@ MIN_ATTEMPTS_FOR_TAIL_FIT = 30
 
 
 def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed: int = 0, n_samples: int = 200,
-          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR) -> Quote:
+          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR, integer: bool = False) -> Quote:
     """Price `target` from the attempt outcomes seen so far.
 
-    Outcomes with real spread and a reasonable sample get a tail fit. Otherwise (few attempts, or
-    integer scores sitting on one value) nothing can be extrapolated, so we count successes under a
-    sceptical prior: with s successes in n attempts,
+    Continuous outcomes with real spread and a reasonable sample get a tail fit. Otherwise (few
+    attempts, or integer scores, whose distribution is a few atoms set by where the search started)
+    nothing can be extrapolated, so we count successes under a sceptical prior: with s successes in
+    n attempts,
 
         P(attempt succeeds) ~ Beta(1/2 + s, prior_usd / (2 * cost_per_attempt) + n - s).
 
     With no successes this prices the strategy at `prior_usd + 2 * (dollars already spent on it)`:
     every dollar spent without reaching the target makes the next dollar look worse.
+
+    A tail fit is also capped by the success count: it may not claim a higher success probability
+    than a draw from Beta(1/2 + s, 1/2 + n - s), the plain posterior after n attempts.
     """
     x = np.asarray(attempts, dtype=np.float64)
     x = x[np.isfinite(x)]
     if x.size == 0:
         return Quote("none", 0, cost_per_attempt, np.zeros(0))
-    if np.unique(x).size < 4 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
-        s = int((x >= target).sum() if maximize else (x <= target).sum())
-        rng = np.random.default_rng(seed)
+    s = int((x >= target).sum() if maximize else (x <= target).sum())
+    rng = np.random.default_rng(seed)
+    if integer or np.unique(x).size < 4 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
         b0 = prior_usd / (2.0 * max(cost_per_attempt, 1e-12))
         return Quote("beta", int(x.size), cost_per_attempt, rng.beta(0.5 + s, b0 + x.size - s, size=n_samples))
     fit = fit_tail(x, maximize=maximize, n_boot=n_samples, seed=seed, xi_prior=xi_prior)
     t = target if maximize else -target
-    return Quote("gpd", int(x.size), cost_per_attempt, fit.p_exceed_samples(t), fit)
+    ps = fit.p_exceed_samples(t)
+    cap = rng.beta(0.5 + s, 0.5 + x.size - s, size=ps.size)
+    return Quote("gpd", int(x.size), cost_per_attempt, np.minimum(ps, cap), fit)
 
 
 def best_of_n_quantiles(attempts, maximize: bool, n_future: float, levels=(0.1, 0.5, 0.9), fit: TailFit | None = None, seed: int = 0) -> list[float] | None:

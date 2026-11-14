@@ -1,0 +1,2196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ante: live ledger</title>
+<style>
+:root {
+  --bg: #f1f3f6; --panel: #ffffff; --ink: #0f172a; --ink2: #334155; --muted: #5b6577;
+  --line: #c3cad6; --line2: #e2e6ec;
+  --good: #15803d; --good-bg: #dcfce7; --bad: #b91c1c; --bad-bg: #fee2e2;
+  --warn: #b45309; --warn-bg: #fef3c7; --info: #1d4ed8; --info-bg: #dbeafe;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { font-size: 15px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.4; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+small, .tiny { font-size: 0.78rem; color: var(--muted); font-weight: 400; }
+.muted { color: var(--muted); }
+.pos { color: var(--good); }
+.neg { color: var(--bad); }
+.warn-t { color: var(--warn); }
+button { font: inherit; }
+
+/* header */
+header.top { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px;
+  padding: 8px 20px; background: #ffffff; border-bottom: 3px solid var(--ink); }
+.logo { font-family: var(--mono); font-weight: 800; font-size: 2rem; line-height: 1; letter-spacing: -0.03em; }
+.tagline { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+.hstats { display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: flex-start; }
+.hstat .k, .meter .k { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
+.hstat .v { font-size: 1.12rem; font-weight: 700; white-space: nowrap; }
+.hstat.hl { background: var(--good-bg); border: 1px solid #86efac; border-radius: 6px; padding: 2px 10px; }
+.meters { display: flex; gap: 18px; flex-wrap: wrap; }
+.meter { min-width: 190px; }
+.meter-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.meter .v { font-weight: 700; font-size: 0.95rem; }
+.mbar { display: flex; height: 10px; background: #e2e6ec; border-radius: 5px; overflow: hidden; margin-top: 3px; border: 1px solid var(--line); }
+.mfill { background: var(--info); height: 100%; }
+.mpend { background: repeating-linear-gradient(45deg, #93c5fd, #93c5fd 4px, #dbeafe 4px, #dbeafe 8px); height: 100%; }
+.meter.near .mfill { background: var(--warn); }
+.meter.over .mfill { background: var(--bad); }
+.livebox { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: #94a3b8; display: inline-block; }
+.dot.live { background: #16a34a; animation: pulse 1.6s ease-in-out infinite; }
+.dot.wait { background: #d97706; }
+.dot.paused { background: #94a3b8; }
+.dot.local { background: var(--info); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,0.55); } 70% { box-shadow: 0 0 0 8px rgba(22,163,74,0); } 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); } }
+#btn-pause { border: 1px solid var(--ink); background: #fff; color: var(--ink); border-radius: 5px; padding: 3px 12px; font-weight: 600; cursor: pointer; }
+#btn-pause:hover { background: var(--ink); color: #fff; }
+#btn-pause:disabled { opacity: 0.4; cursor: default; }
+
+/* banner */
+#banner { padding: 0 20px; }
+.wait { margin: 14px 0 0; padding: 18px 20px; background: #fff; border: 2px dashed var(--warn); border-radius: 8px; }
+.wait-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
+.wait > div { margin-top: 6px; }
+.notice { margin: 10px 0 0; padding: 6px 12px; background: var(--warn-bg); border: 1px solid #f0c36d; border-radius: 6px; font-size: 0.85rem; color: #78350f; }
+
+/* panels */
+main { padding: 14px 20px 30px; display: flex; flex-direction: column; gap: 14px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 10px; }
+.panel-head h2 { margin: 0; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.panel-head .sub { font-size: 0.82rem; color: var(--muted); flex: 1 1 300px; }
+.cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.col-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 1100px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.empty { padding: 18px 8px; color: var(--muted); font-size: 0.92rem; text-align: center; }
+
+/* chips and filters */
+.chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.76rem; font-weight: 700; border: 1px solid; white-space: nowrap; }
+.chip-good { background: var(--good-bg); color: #14532d; border-color: #4ade80; }
+.chip-strong { background: var(--good); color: #fff; border-color: var(--good); }
+.chip-warn { background: var(--warn-bg); color: #78350f; border-color: #f0b429; }
+.chip-bad { background: var(--bad-bg); color: #7f1d1d; border-color: #f87171; }
+.chip-info { background: var(--info-bg); color: #1e3a8a; border-color: #93c5fd; }
+.chip-neutral { background: #eef1f5; color: var(--ink2); border-color: var(--line); }
+.chip-muted { background: #f6f7f9; color: var(--muted); border-color: var(--line2); }
+.pchip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 0.74rem; font-weight: 700; color: #fff; white-space: nowrap; }
+.filters { display: flex; flex-wrap: wrap; gap: 5px 6px; align-items: center; }
+.frow { display: flex; flex-wrap: wrap; gap: 5px 6px; align-items: center; margin-bottom: 6px; width: 100%; }
+.flabel { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; margin-right: 2px; }
+.fchip { border: 1px solid var(--line); background: #fff; color: var(--ink2); border-radius: 999px; padding: 2px 10px; font-size: 0.8rem; cursor: pointer; }
+.fchip:hover { border-color: var(--ink); }
+.fchip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* problem cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.pcard { border: 1px solid var(--line); border-top: 5px solid var(--ink); border-radius: 6px; padding: 10px 12px; min-width: 0; background: #fff; }
+.pcard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.pcard-title { cursor: pointer; min-width: 0; }
+.pcard-title:hover .ptitle { text-decoration: underline; }
+.ptitle { font-weight: 700; font-size: 1.02rem; }
+.pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0 8px; }
+.kv .k { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 0.98rem; font-weight: 600; word-break: break-all; }
+.kv .v.big { font-size: 1.22rem; font-weight: 800; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 8px; }
+.check { font-size: 0.76rem; font-weight: 700; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line); background: #f6f7f9; color: var(--muted); }
+.check.ok { background: var(--good-bg); color: #14532d; border-color: #4ade80; }
+.check.fail { background: var(--bad-bg); color: #7f1d1d; border-color: #f87171; }
+svg.chart { width: 100%; height: auto; display: block; }
+svg .axis { font-family: var(--mono); font-size: 10px; fill: #475569; }
+svg .axis.rec { fill: #0f172a; font-weight: 700; }
+.chart-cap { margin-top: 2px; }
+.pfoot { margin-top: 4px; }
+
+/* market table */
+.tablewrap { overflow-x: auto; }
+table.market { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.market th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink2); padding: 6px 8px; border-bottom: 2px solid var(--ink); cursor: pointer; user-select: none; white-space: nowrap; vertical-align: bottom; }
+table.market th:hover { background: #eef1f5; }
+table.market th.sorted { color: var(--info); }
+table.market td { padding: 6px 8px; border-bottom: 1px solid var(--line2); vertical-align: top; }
+table.market .num { text-align: right; white-space: nowrap; }
+tr.srow { cursor: pointer; }
+tr.srow:hover td { background: #f6f8fb; }
+tr.srow.open td { background: #eef4ff; border-bottom-color: transparent; }
+tr.srow.dim td { color: var(--muted); }
+td.hyp { min-width: 240px; max-width: 400px; }
+td.kern { max-width: 240px; }
+.clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+.caret { color: var(--muted); }
+tr.sdetail td { background: #f8fafc; border-bottom: 2px solid var(--line); padding: 10px 14px 14px; }
+.sd-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 18px; }
+@media (max-width: 1100px) { .sd-grid { grid-template-columns: minmax(0, 1fr); } }
+.sd-h { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 700; margin: 8px 0 2px; }
+.sd-text { font-size: 0.92rem; }
+pre.params { margin: 0; padding: 8px; background: #fff; border: 1px solid var(--line2); border-radius: 4px; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+.kvl { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 14px; font-size: 0.85rem; }
+.kvl .k { color: var(--muted); margin-right: 6px; }
+table.mini { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 2px; }
+table.mini th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 3px 6px; border-bottom: 1px solid var(--line); cursor: default; }
+table.mini td { padding: 3px 6px; border-bottom: 1px solid var(--line2); background: transparent; }
+
+/* decision log */
+.log { max-height: 80vh; overflow-y: auto; border: 1px solid var(--line2); border-radius: 6px; }
+.le { border-bottom: 1px solid var(--line2); border-left: 5px solid transparent; }
+.le-head { display: grid; grid-template-columns: 48px 98px minmax(0, 1fr); gap: 8px; padding: 6px 8px; cursor: pointer; align-items: baseline; }
+.le-head:hover { background: #f6f8fb; }
+.le-time { font-size: 0.78rem; color: var(--muted); text-align: right; }
+.le-tag { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-align: center; padding: 2px 4px; border-radius: 3px; background: #e8ebf0; color: var(--ink2); white-space: nowrap; align-self: start; }
+.le-text { font-size: 0.9rem; overflow-wrap: anywhere; }
+.le-text .sid { font-family: var(--mono); }
+.lnote { color: var(--ink2); font-style: italic; }
+.k-card .le-tag { background: var(--info-bg); color: #1e3a8a; }
+.k-alloc .le-tag { background: #1e3a8a; color: #fff; }
+.k-strategy .le-tag { background: #f3e8ff; color: #6b21a8; }
+.k-candidate .le-tag { background: var(--good-bg); color: #14532d; }
+.k-insight .le-tag { background: #d97706; color: #fff; }
+.k-result .le-tag { background: #0f172a; color: #fff; }
+.le.k-insight { border-left-color: #d97706; background: #fffbeb; }
+.le.k-insight .le-text { font-size: 0.97rem; font-weight: 500; }
+.le.k-alloc { border-left-color: #1e3a8a; }
+.le.good { border-left-color: var(--good); }
+.le.big { border-left-color: var(--good); background: var(--good-bg); }
+.le.alert { border-left-color: var(--warn); background: var(--warn-bg); }
+.le.surprise { border-left-color: #ea580c; background: #fff3e6; }
+.le.bad { border-left-color: var(--bad); background: #fef2f2; }
+.le.bad .le-tag { background: var(--bad); color: #fff; }
+pre.raw { margin: 0 8px 8px 64px; padding: 8px 10px; background: #0f172a; color: #e2e8f0; font: 12px/1.45 var(--mono); border-radius: 4px; white-space: pre-wrap; word-break: break-word; max-height: 380px; overflow: auto; }
+.more { padding: 10px; text-align: center; }
+.more button { border: 1px solid var(--ink); background: #fff; border-radius: 5px; padding: 4px 14px; cursor: pointer; font-weight: 600; }
+
+/* calibration */
+.calib-charts { display: flex; flex-wrap: wrap; gap: 10px; }
+.cc { flex: 1 1 170px; max-width: 280px; min-width: 0; }
+.cc-title { font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 6px; }
+.swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+svg.calib-svg { width: 100%; height: auto; display: block; }
+table.stats { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 10px 0 6px; }
+table.stats th { text-align: right; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 4px 6px; border-bottom: 2px solid var(--ink); }
+table.stats th:first-child, table.stats td:first-child { text-align: left; }
+table.stats td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line2); }
+table.stats tr.total td { font-weight: 800; border-top: 2px solid var(--line); }
+
+/* spend */
+.sp-h { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink2); font-weight: 700; margin: 10px 0 4px; }
+.sp-h:first-child { margin-top: 0; }
+.bar-row { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) 62px; gap: 8px; align-items: center; font-size: 0.84rem; margin: 3px 0; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { display: flex; height: 14px; background: #eef1f5; border-radius: 3px; overflow: hidden; }
+.bar-seg { height: 100%; }
+.bar-val { text-align: right; font-weight: 600; }
+.legend { display: inline-flex; gap: 10px; margin-left: 8px; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); }
+.legend .swatch { margin-right: 3px; }
+
+footer { padding: 0 20px 24px; font-size: 0.78rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="logo">ante</div>
+    <div class="tagline">pilot, price, forecast, then spend</div>
+  </div>
+  <div id="h-run" class="hstats"></div>
+  <div id="h-meters" class="meters"></div>
+  <div class="livebox" id="livebox">
+    <span id="live-dot" class="dot wait"></span>
+    <span id="live-text">connecting</span>
+    <button type="button" id="btn-pause" data-act="pause">Pause</button>
+  </div>
+</header>
+<div id="banner"></div>
+<main>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Problems</h2>
+      <span class="sub">Our best candidate against the public record. Click a title to filter the market and the log to that problem.</span>
+    </div>
+    <div id="problems" class="cards"></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Strategy market</h2>
+      <span class="sub">Price = estimated dollars of compute until a strategy beats the record, fitted from its own attempts. Click a row for the full hypothesis, forecasts and results; click a header to sort.</span>
+      <div id="market-filters" class="filters"></div>
+    </div>
+    <div id="market" class="tablewrap"></div>
+  </section>
+  <div class="cols">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Decision log</h2>
+        <span class="sub">Every ledger event as a sentence, newest first. Click an entry for the raw record.</span>
+      </div>
+      <div id="log-filters" class="filters"></div>
+      <div id="log" class="log"></div>
+    </section>
+    <div class="col-right">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Forecast calibration</h2>
+          <span class="sub">Forecasts are written to the ledger before the run; the referee scores them afterwards.</span>
+        </div>
+        <div id="calib"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Spend</h2>
+          <span class="sub">Where the dollars went.</span>
+        </div>
+        <div id="spend"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<footer id="foot"></footer>
+<noscript>This dashboard needs JavaScript to replay the ledger.</noscript>
+
+<script>
+(function () {
+'use strict';
+
+/* ======================================================================
+   1. Configuration
+   ====================================================================== */
+var QS = (function () {
+  var out = Object.create(null);
+  try {
+    var sp = new URLSearchParams(window.location.search);
+    sp.forEach(function (v, k) { out[k] = v; });
+  } catch (e) { /* fall back to defaults */ }
+  return out;
+})();
+var LEDGER_URL = (typeof QS.ledger === 'string' && QS.ledger !== '') ? QS.ledger : 'ledger.jsonl';
+var POLL_MS = (function () {
+  var s = parseFloat(QS.poll);
+  if (!isFinite(s) || s < 1) s = 5;
+  return Math.round(s * 1000);
+})();
+var LOG_PAGE = 300;
+var CHECKS = ['independent', 'official-sandbox', 'audit', 'provenance'];
+var UNREACHABLE_USD = 1e12;
+var PALETTE = ['#1d4ed8', '#b45309', '#7e22ce', '#0f766e', '#be185d', '#4d7c0f', '#0369a1', '#a16207'];
+var SOURCE_ORDER = ['prior', 'tail-fit', 'beta'];
+var SOURCE_COLORS = {'prior': '#7e22ce', 'tail-fit': '#1d4ed8', 'beta': '#c2410c'};
+var BIN_EDGES = [0, 0.02, 0.05, 0.1, 0.25, 0.5, 1];
+var KINDS = [
+  {k: 'card', label: 'bets'},
+  {k: 'result', label: 'results'},
+  {k: 'alloc', label: 'allocations'},
+  {k: 'strategy', label: 'strategies'},
+  {k: 'candidate', label: 'candidates + checks'},
+  {k: 'insight', label: 'lessons + notes'},
+  {k: 'system', label: 'run / cycle / arena'},
+  {k: 'llm', label: 'LLM calls'},
+  {k: 'other', label: 'other'}
+];
+var MARKET_COLS = [
+  {k: 'problem', label: 'Problem'},
+  {k: 'sid', label: 'Strategy'},
+  {k: 'hypothesis', label: 'Hypothesis'},
+  {k: 'kernel', label: 'Kernel / params'},
+  {k: 'proposer', label: 'Proposer'},
+  {k: 'attempts', label: 'Attempts', num: true},
+  {k: 'spent', label: 'Spent', num: true},
+  {k: 'price', label: 'Price to record', num: true, title: 'Latest estimate of the compute dollars needed to beat the record, with its low/high band'},
+  {k: 'ptranche', label: 'P(record) next tranche', num: true, title: 'Chance of a record in the next tranche, from the most recent allocation table'},
+  {k: 'best', label: 'Best score', num: true, title: 'Best score this strategy has produced, with the signed gap to the record'},
+  {k: 'status', label: 'Status'}
+];
+var DESC_FIRST = {attempts: true, spent: true, ptranche: true, status: true};
+
+/* ======================================================================
+   2. Small helpers
+   ====================================================================== */
+function dict() { return Object.create(null); }
+function has(o, k) { return o !== null && o !== undefined && Object.prototype.hasOwnProperty.call(o, k); }
+function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+function isNil(v) { return v === null || v === undefined || (typeof v === 'number' && isNaN(v)); }
+function esc(v) {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function str(v, dflt) {
+  if (v === null || v === undefined) return dflt === undefined ? '' : dflt;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch (e) { return String(v); }
+}
+/* number or null; accepts numeric strings and "inf" / "Infinity" spellings */
+function num(v) {
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  if (typeof v === 'string') {
+    var s = v.trim().toLowerCase();
+    if (s === '') return null;
+    if (s === 'inf' || s === '+inf' || s === 'infinity' || s === '+infinity') return Infinity;
+    if (s === '-inf' || s === '-infinity') return -Infinity;
+    var x = Number(s);
+    return isNaN(x) ? null : x;
+  }
+  return null;
+}
+/* finite number or null */
+function fin(v) { var x = num(v); return (x === null || !isFinite(x)) ? null : x; }
+function usd0(v) { var x = fin(v); return (x === null || x < 0) ? 0 : x; }
+function bool(v) { return v === true || v === 1 || v === 'true' || v === 'True'; }
+function boolOrNull(v) {
+  if (v === true || v === 1 || v === 'true' || v === 'True') return true;
+  if (v === false || v === 0 || v === 'false' || v === 'False') return false;
+  return null;
+}
+/* a price in dollars; null, infinite, absurdly large or negative all mean "unreachable" */
+function priceNum(v) {
+  var x = num(v);
+  if (x === null || !isFinite(x) || x >= UNREACHABLE_USD || x < 0) return Infinity;
+  return x;
+}
+function clip(s, n) { s = str(s, ''); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s; }
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function r1(x) { return Math.round(x * 10) / 10; }
+function addTo(map, key, v) { map[key] = (map[key] || 0) + v; }
+function trimZeros(s) {
+  if (s.indexOf('.') < 0 || s.indexOf('e') >= 0) return s;
+  return s.replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/* ---------- number formatting ---------- */
+function fmtInt(n) {
+  var x = fin(n);
+  if (x === null) return '\u2013';
+  return String(Math.round(x)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function fmtCount(n) {
+  var x = fin(n);
+  if (x === null) return '\u2013';
+  var a = Math.abs(x);
+  if (a < 10000) return fmtInt(x);
+  if (a < 1e6) return trimZeros((x / 1e3).toFixed(1)) + 'k';
+  if (a < 1e9) return trimZeros((x / 1e6).toFixed(2)) + 'M';
+  return x.toExponential(2);
+}
+function fmtG(v) {
+  var x = fin(v);
+  if (x === null) return '\u2013';
+  if (x === 0) return '0';
+  var a = Math.abs(x);
+  if (a >= 0.001 && a < 1000) return trimZeros(x.toPrecision(3));
+  if (a >= 1000 && a < 1e6) return fmtInt(x);
+  return x.toExponential(2);
+}
+function fmtUsd(v) {
+  var x = num(v);
+  if (x === null) return '\u2013';
+  if (!isFinite(x)) return x > 0 ? '$\u221e' : '-$\u221e';
+  var a = Math.abs(x), s;
+  if (a === 0) s = '$0';
+  else if (a < 0.0001) s = '$' + a.toExponential(1);
+  else if (a < 0.1) s = '$' + a.toPrecision(2);
+  else if (a < 10) s = '$' + a.toFixed(2);
+  else if (a < 100) s = '$' + a.toFixed(1);
+  else if (a < 1000) s = '$' + a.toFixed(0);
+  else if (a < 1e6) s = '$' + sig2(a / 1e3) + 'k';
+  else if (a < 1e9) s = '$' + sig2(a / 1e6) + 'M';
+  else if (a < 1e12) s = '$' + sig2(a / 1e9) + 'B';
+  else s = '$' + a.toExponential(1);
+  return x < 0 ? '-' + s : s;
+}
+function sig2(a) { return a < 10 ? trimZeros(a.toFixed(1)) : a.toFixed(0); }
+function fmtPrice(v) {
+  var x = priceNum(v);
+  return isFinite(x) ? fmtUsd(x) : 'unreachable';
+}
+function fmtPct(v) {
+  var p = fin(v);
+  if (p === null) return '\u2013';
+  var pct = p * 100;
+  if (pct <= 0) return '0%';
+  if (pct >= 100) return '100%';
+  if (pct < 0.001) return '<0.001%';
+  if (pct > 99) return trimZeros(pct.toFixed(1)) + '%';
+  if (pct >= 10) return pct.toFixed(0) + '%';
+  return String(Number(pct.toPrecision(2))) + '%';
+}
+function fmtDraw(v) {
+  var x = fin(v);
+  if (x === null) return '\u2013';
+  return (x >= 0 && x <= 1) ? fmtPct(x) : fmtG(x);
+}
+function fmtProb(v) {
+  var p = fin(v);
+  if (p === null) return '\u2013';
+  if (p === 0) return '0';
+  if (p >= 0.001) return fmtPct(p);
+  return p.toExponential(1);
+}
+function fmtBrier(v) {
+  var x = fin(v);
+  if (x === null) return '\u2013';
+  if (x === 0) return '0';
+  if (x < 0.0005) return '<0.001';
+  return x.toFixed(3);
+}
+/* p is the problem record (may be null); it carries .integer and .decimals */
+function fmtScore(v, p) {
+  var x = num(v);
+  if (x === null) return '\u2013';
+  if (!isFinite(x)) return x > 0 ? '\u221e' : '-\u221e';
+  var a = Math.abs(x);
+  if (p && p.integer) return Number.isInteger(x) ? String(x) : trimZeros(x.toFixed(3));
+  if (p && p.decimals !== null && p.decimals !== undefined && a < 1e9 && (a >= 1e-4 || a === 0)) return x.toFixed(p.decimals);
+  if (Number.isInteger(x) && a < 1e15) return String(x);
+  if (a !== 0 && (a >= 1e9 || a < 1e-4)) return x.toExponential(4);
+  return trimZeros(x.toPrecision(7));
+}
+/* signed gap, in the problem's units */
+function fmtGap(v, p) {
+  var x = fin(v);
+  if (x === null) return '\u2013';
+  if (x === 0) return '0';
+  var sign = x > 0 ? '+' : '-';
+  var a = Math.abs(x);
+  if (p && p.integer && Number.isInteger(a)) return sign + String(a);
+  if (a >= 0.01 && a < 1000) return sign + trimZeros(a.toPrecision(3));
+  return sign + a.toExponential(2);
+}
+function fmtDur(v) {
+  var x = fin(v);
+  if (x === null) return '\u2013';
+  x = Math.max(0, Math.round(x));
+  var h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), s = x % 60;
+  if (h > 0) return h + 'h ' + pad2(m) + 'm';
+  if (m > 0) return m + 'm ' + pad2(s) + 's';
+  return s + 's';
+}
+function fmtClock(v) {
+  var x = fin(v);
+  if (x === null) return '';
+  var neg = x < 0;
+  x = Math.round(Math.abs(x));
+  var h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), s = x % 60;
+  return (neg ? '-' : '') + (h > 0 ? h + ':' + pad2(m) : String(m)) + ':' + pad2(s);
+}
+function fmtWall(ts) {
+  var x = fin(ts);
+  if (x === null) return '';
+  try { return new Date(x * 1000).toLocaleString(); } catch (e) { return ''; }
+}
+function fmtAgo(ms) {
+  var s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + 's' : fmtDur(s);
+}
+function jsonReplacer(k, v) { return (typeof v === 'number' && !isFinite(v)) ? String(v) : v; }
+function prettyJson(v) {
+  if (v === undefined) return 'null';
+  try { return JSON.stringify(v, jsonReplacer, 2); } catch (e) { return '(could not serialise)'; }
+}
+function rawJson(events) {
+  var out = [];
+  for (var i = 0; i < events.length; i++) out.push(prettyJson(events[i]));
+  return out.join('\n');
+}
+function shortVal(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'object') {
+    var j;
+    try { j = JSON.stringify(v); } catch (e) { j = '?'; }
+    j = str(j, '?');
+    return j.length > 26 ? j.slice(0, 25) + '\u2026' : j;
+  }
+  return String(v);
+}
+function paramSummary(params, maxLen) {
+  if (!isObj(params)) return '';
+  var parts = [], k;
+  for (k in params) { if (has(params, k)) parts.push(k + '=' + shortVal(params[k])); }
+  return clip(parts.join(', '), maxLen);
+}
+function shortSlug(slug) {
+  var t = String(slug).split('-');
+  while (t.length > 1 && /^[a-z]?\d+$/i.test(t[t.length - 1])) t.pop();
+  if (t.length > 1 && t[0].length <= 4) return t[0] + '-' + t[1];
+  return t[0];
+}
+function shortSid(sid) {
+  var s = str(sid, '?');
+  var i = s.lastIndexOf('/');
+  if (i >= 0 && i < s.length - 1) s = s.slice(i + 1);
+  if (s.length > 12) s = s.slice(0, 10) + '\u2026';
+  return s;
+}
+
+/* ======================================================================
+   3. Parsing the ledger text
+   ====================================================================== */
+/* Python's json.dumps writes bare NaN / Infinity, which JSON.parse rejects.
+   Replace those tokens when they appear outside strings. */
+function sanitizeJsonLine(s) {
+  var out = '', i = 0, n = s.length, inStr = false, c;
+  while (i < n) {
+    c = s.charAt(i);
+    if (inStr) {
+      out += c;
+      if (c === '\\') { if (i + 1 < n) out += s.charAt(i + 1); i += 2; continue; }
+      if (c === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"') { inStr = true; out += c; i++; continue; }
+    if (c === 'N' && s.substr(i, 3) === 'NaN') { out += 'null'; i += 3; continue; }
+    if (c === 'I' && s.substr(i, 8) === 'Infinity') { out += '1e999'; i += 8; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+}
+function parseLine(line) {
+  var v;
+  try { v = JSON.parse(line); }
+  catch (e1) {
+    if (line.indexOf('NaN') < 0 && line.indexOf('Infinity') < 0) return null;
+    try { v = JSON.parse(sanitizeJsonLine(line)); } catch (e2) { return null; }
+  }
+  return isObj(v) ? v : null;
+}
+function parseLedger(text) {
+  var out = {events: [], bad: 0, truncated: false, lines: 0};
+  if (typeof text !== 'string' || text.length === 0) return out;
+  var lines = text.split('\n');
+  var last = -1, i, line, ev;
+  for (i = lines.length - 1; i >= 0; i--) { if (lines[i].trim() !== '') { last = i; break; } }
+  var endsWithNewline = text.charAt(text.length - 1) === '\n';
+  for (i = 0; i <= last; i++) {
+    line = lines[i].trim();
+    if (line === '') continue;
+    out.lines++;
+    ev = parseLine(line);
+    if (ev === null) {
+      if (i === last && !endsWithNewline) out.truncated = true; else out.bad++;
+      continue;
+    }
+    out.events.push(ev);
+  }
+  return out;
+}
+
+/* ======================================================================
+   4. replay(events) -> state   (pure: no DOM, no globals besides constants)
+   ====================================================================== */
+function newState() {
+  return {
+    run: {id: null, budgetCompute: null, budgetLlm: null, config: null, problems: [], startTs: null, ended: false, endReason: null, runsInFile: 0},
+    firstTs: null, lastTs: null, curTs: null, t0: null, nEvents: 0, evIndex: 0,
+    cycle: {n: null, phase: null},
+    shortNames: dict(),
+    problems: dict(), problemOrder: [],
+    strategies: dict(), strategyOrder: [],
+    cards: dict(), cardOrder: [],
+    allocations: [],
+    forecasts: [],
+    spend: {compute: 0, llm: 0, byProblem: dict(), byStage: dict(), llmByPurpose: dict(), llmByModel: dict(), llmCalls: 0, tokensIn: 0, tokensOut: 0},
+    log: [],
+    counts: dict(), unknownTypes: dict(),
+    replayErrors: 0, lastReplayError: null,
+    derived: {inflight: 0, inflightN: 0, verified: 0, verifiedFull: 0, minChecks: null, usdPerVerified: null}
+  };
+}
+
+function collectShortNames(events) {
+  var slugs = [], seen = dict(), i, j, ev;
+  function add(v) {
+    if (typeof v === 'string' && v !== '' && v !== 'global' && !seen[v]) { seen[v] = true; slugs.push(v); }
+  }
+  for (i = 0; i < events.length; i++) {
+    ev = events[i];
+    if (!isObj(ev)) continue;
+    if (ev.type === 'run_start' && Array.isArray(ev.problems)) { for (j = 0; j < ev.problems.length; j++) add(ev.problems[j]); }
+    add(ev.problem);
+  }
+  var names = dict(), count = dict(), sh;
+  for (i = 0; i < slugs.length; i++) { sh = shortSlug(slugs[i]); count[sh] = (count[sh] || 0) + 1; }
+  for (i = 0; i < slugs.length; i++) { sh = shortSlug(slugs[i]); names[slugs[i]] = count[sh] > 1 ? slugs[i] : sh; }
+  return names;
+}
+
+function getProblem(st, slug) {
+  var key = str(slug, '');
+  if (key === '') key = '(unknown)';
+  var p = st.problems[key];
+  if (!p) {
+    p = {slug: key, title: null, maximize: null, record: null, target: null, leader: null, top: [], snapshots: 0,
+         integer: false, decimals: null, color: PALETTE[st.problemOrder.length % PALETTE.length],
+         best: null, history: [], candidates: [], verifs: dict(), status: null};
+    st.problems[key] = p;
+    st.problemOrder.push(key);
+  }
+  return p;
+}
+function getStrategy(st, sid, problemHint) {
+  var key = str(sid, '');
+  if (key === '') key = '(unknown)';
+  var s = st.strategies[key];
+  if (!s) {
+    s = {sid: key, idx: st.strategyOrder.length, order: st.evIndex, problem: null, kernel: null, params: null, hypothesis: '', rationale: '',
+         source: '', proposer: '', parent: null, prior: null, declared: false, ts: null, cycle: null,
+         cards: [], attempts: 0, spent: 0, nResults: 0, nErrors: 0, lastError: null, best: null,
+         price: null, prevPrice: null, priceHistory: [], lastAlloc: null, funded: 0, fundedTimes: 0, scaleCards: 0, pilotCards: 0, running: 0,
+         lastResultEntry: null, lastResultHasPrice: false,
+         status: 'proposed', statusRank: 10, statusLabel: 'proposed', statusNote: ''};
+    st.strategies[key] = s;
+    st.strategyOrder.push(key);
+  }
+  if (!s.problem && typeof problemHint === 'string' && problemHint !== '') s.problem = problemHint;
+  return s;
+}
+function getCard(st, cid) {
+  var key = str(cid, '');
+  if (key === '') key = '(unknown)';
+  var c = st.cards[key];
+  if (!c) {
+    c = {cid: key, sid: '', problem: '', stage: null, workers: null, seconds: null, budget: null, forecast: null,
+         card: null, result: null, referee: null, cycle: null, ts: null, state: 'unknown', resultEntry: null};
+    st.cards[key] = c;
+    st.cardOrder.push(key);
+  }
+  return c;
+}
+function isBetter(p, a, b) { return (p && p.maximize === true) ? a > b : a < b; }
+/* how a score relates to the record: beats | margin | ties | behind | unknown */
+function relation(p, score) {
+  if (!p || score === null || p.record === null) return 'unknown';
+  var max = p.maximize === true;
+  if (p.target !== null) {
+    if (max ? score >= p.target : score <= p.target) return 'beats';
+  } else if (max ? score > p.record : score < p.record) {
+    return 'beats';
+  }
+  if (score === p.record) return 'ties';
+  if (max ? score > p.record : score < p.record) return 'margin';
+  return 'behind';
+}
+function setPrecision(p) {
+  p.integer = false;
+  p.decimals = null;
+  var rec = p.record, tgt = p.target;
+  if (rec === null) return;
+  if (Number.isInteger(rec) && (tgt === null || Number.isInteger(tgt))) { p.integer = true; p.decimals = 0; return; }
+  if (tgt !== null && tgt !== rec) {
+    var d = Math.round(-Math.log(Math.abs(tgt - rec)) / Math.LN10) + 1;
+    if (isFinite(d)) p.decimals = Math.max(3, Math.min(12, d));
+  }
+}
+
+/* ---------- text fragments used by the decision log (all ledger text is escaped) ---------- */
+function pPlain(st, slug) { var k = str(slug, ''); return st.shortNames[k] || k || '?'; }
+function pName(st, slug) { return '<b>' + esc(pPlain(st, slug)) + '</b>'; }
+function sPlain(st, sid, problemHint) {
+  var k = str(sid, '');
+  var s = st.strategies[k];
+  var prob = (s && s.problem) ? s.problem : ((typeof problemHint === 'string') ? problemHint : '');
+  return (prob ? pPlain(st, prob) + '/' : '') + shortSid(k);
+}
+function sName(st, sid, problemHint) { return '<b class="sid">' + esc(sPlain(st, sid, problemHint)) + '</b>'; }
+function addEntry(st, ev, kind, tag, problem, html, flags) {
+  var e = {id: st.log.length, ts: st.curTs, cycle: st.cycle.n, kind: kind, tag: tag,
+           problem: (typeof problem === 'string' && problem !== '') ? problem : null,
+           html: html, events: [ev], surprise: false, good: false, bad: false, big: false, alert: false};
+  if (flags) { for (var k in flags) { if (has(flags, k)) e[k] = flags[k]; } }
+  st.log.push(e);
+  return e;
+}
+function forecastSentence(f, p) {
+  if (!isObj(f)) return 'No forecast was recorded.';
+  var src = str(f.source, '');
+  var a = [];
+  if (fin(f.p_new_best) !== null) a.push('<b>' + esc(fmtPct(f.p_new_best)) + '</b> chance of a new best');
+  if (fin(f.p_record) !== null) a.push('<b>' + esc(fmtPct(f.p_record)) + '</b> chance of a record');
+  var s = 'Forecast' + (src ? ' (' + esc(src) + ')' : '') + ': ' + (a.length ? a.join(', ') : 'no probabilities given') + '.';
+  if (fin(f.best_q10) !== null && fin(f.best_q90) !== null) {
+    s += ' Expects best in [<span class="mono">' + esc(fmtScore(f.best_q10, p)) + '</span>, <span class="mono">' + esc(fmtScore(f.best_q90, p)) + '</span>].';
+  }
+  return s;
+}
+function bandText(pr) {
+  if (!pr || pr.bandLo === null || pr.bandHi === null) return '';
+  var lo = fmtPrice(pr.bandLo), hi = fmtPrice(pr.bandHi);
+  if (lo === 'unreachable' && hi === 'unreachable') return '';
+  return lo + ' to ' + hi;
+}
+
+/* ---------- one handler per event type ---------- */
+function applyRunStart(st, ev) {
+  st.run.id = str(ev.run_id, '');
+  var b = ev.budget_usd;
+  if (isObj(b)) {
+    if (fin(b.compute) !== null) st.run.budgetCompute = fin(b.compute);
+    if (fin(b.llm) !== null) st.run.budgetLlm = fin(b.llm);
+  } else if (fin(b) !== null) {
+    st.run.budgetCompute = fin(b);
+  }
+  st.run.config = isObj(ev.config) ? ev.config : null;
+  if (st.run.startTs === null) st.run.startTs = st.curTs;
+  st.run.ended = false;
+  st.run.endReason = null;
+  var names = [], i, slug;
+  if (Array.isArray(ev.problems)) {
+    for (i = 0; i < ev.problems.length; i++) {
+      slug = ev.problems[i];
+      if (typeof slug === 'string' && slug !== '') { getProblem(st, slug); names.push(esc(pPlain(st, slug))); st.run.problems.push(slug); }
+    }
+  }
+  var html = 'Run <b class="mono">' + esc(st.run.id || '?') + '</b> started.';
+  var bud = [];
+  if (st.run.budgetCompute !== null) bud.push(esc(fmtUsd(st.run.budgetCompute)) + ' compute');
+  if (st.run.budgetLlm !== null) bud.push(esc(fmtUsd(st.run.budgetLlm)) + ' LLM');
+  if (bud.length) html += ' Budget: ' + bud.join(', ') + '.';
+  if (names.length) html += ' Problems: ' + names.join(', ') + '.';
+  if (st.run.config && typeof st.run.config.note === 'string' && st.run.config.note !== '') {
+    html += ' <span class="lnote">' + esc(clip(st.run.config.note, 300)) + '</span>';
+  }
+  addEntry(st, ev, 'system', 'RUN', null, html, null);
+}
+
+function applyArena(st, ev) {
+  var slug = str(ev.problem, '');
+  if (slug === '') { addEntry(st, ev, 'system', 'ARENA', null, 'Arena snapshot without a problem name.', null); return; }
+  var p = getProblem(st, slug);
+  var prevRecord = p.record;
+  var first = p.snapshots === 0;
+  p.snapshots++;
+  if (typeof ev.title === 'string' && ev.title !== '') p.title = ev.title;
+  var mx = boolOrNull(ev.maximize);
+  if (mx !== null) p.maximize = mx;
+  var top = Array.isArray(ev.top) ? ev.top : null;
+  var rec = fin(ev.record), tgt = fin(ev.target);
+  if (rec === null && top && top.length && isObj(top[0])) rec = fin(top[0].bestScore);
+  if (rec !== null) p.record = rec;
+  if (tgt !== null) p.target = tgt;
+  if (ev.leader !== null && ev.leader !== undefined && ev.leader !== '') p.leader = str(ev.leader);
+  else if (top && top.length && isObj(top[0]) && top[0].agentName) p.leader = str(top[0].agentName);
+  if (top) p.top = top;
+  setPrecision(p);
+  var recTxt = '<span class="mono">' + esc(fmtScore(p.record, p)) + '</span>';
+  var who = p.leader ? ' held by <b>' + esc(p.leader) + '</b>' : '';
+  var dirTxt = p.maximize === true ? ' (higher is better)' : (p.maximize === false ? ' (lower is better)' : '');
+  var html, flags = null;
+  if (!first && prevRecord !== null && p.record !== null && p.record !== prevRecord) {
+    html = '<b class="warn-t">The record moved</b> on ' + pName(st, slug) + ': <span class="mono">' + esc(fmtScore(prevRecord, p)) + '</span> to ' + recTxt + who + '.';
+    if (p.target !== null) html += ' New score needed for #1: <span class="mono">' + esc(fmtScore(p.target, p)) + '</span>.';
+    flags = {alert: true};
+  } else if (first) {
+    html = 'Arena snapshot for ' + pName(st, slug) + ': record ' + recTxt + who + dirTxt + '.';
+    if (p.target !== null) html += ' Score needed for #1: <span class="mono">' + esc(fmtScore(p.target, p)) + '</span>.';
+  } else {
+    html = 'Arena check for ' + pName(st, slug) + ': record unchanged at ' + recTxt + who + '.';
+  }
+  addEntry(st, ev, 'system', 'ARENA', slug, html, flags);
+}
+
+function applyStrategy(st, ev) {
+  var s = getStrategy(st, ev.sid, ev.problem);
+  s.declared = true;
+  if (typeof ev.problem === 'string' && ev.problem !== '') { s.problem = ev.problem; getProblem(st, ev.problem); }
+  s.kernel = isNil(ev.kernel) ? null : str(ev.kernel);
+  s.params = (ev.params === undefined) ? null : ev.params;
+  s.hypothesis = str(ev.hypothesis, '');
+  s.rationale = str(ev.rationale, '');
+  s.source = str(ev.source, '');
+  s.proposer = str(ev.proposer, '');
+  s.parent = (isNil(ev.parent) || ev.parent === '') ? null : str(ev.parent);
+  s.prior = isObj(ev.prior) ? ev.prior : null;
+  s.order = st.evIndex;
+  s.ts = st.curTs;
+  s.cycle = st.cycle.n;
+  var p = s.problem ? st.problems[s.problem] : null;
+  var who;
+  if (s.proposer && s.proposer !== 'seed') who = 'proposed by <b>' + esc(s.proposer) + '</b>';
+  else if (s.proposer === 'seed' || s.source === 'seed') who = 'from the seed list';
+  else who = 'proposed';
+  var html = 'New strategy ' + sName(st, s.sid, s.problem) + ' ' + who;
+  if (s.kernel) html += ', kernel <span class="mono">' + esc(s.kernel) + '</span>';
+  if (s.parent) html += ', refines ' + sName(st, s.parent, s.problem);
+  html += '.';
+  if (s.hypothesis) html += ' Hypothesis: \u201c' + esc(clip(s.hypothesis, 400)) + '\u201d';
+  if (s.prior && fin(s.prior.p_record) !== null) {
+    html += ' Own forecast: ' + esc(fmtPct(s.prior.p_record)) + ' chance of a record per tranche';
+    if (fin(s.prior.expected_best) !== null) html += ', best near <span class="mono">' + esc(fmtScore(s.prior.expected_best, p)) + '</span>';
+    html += '.';
+  }
+  addEntry(st, ev, 'strategy', 'STRATEGY', s.problem, html, null);
+}
+
+function applyCard(st, ev) {
+  var c = getCard(st, ev.cid);
+  var s = getStrategy(st, ev.sid, ev.problem);
+  c.card = ev;
+  c.sid = s.sid;
+  c.problem = (typeof ev.problem === 'string' && ev.problem !== '') ? ev.problem : (s.problem || '');
+  c.stage = str(ev.stage, '') || 'unknown';
+  c.workers = fin(ev.workers);
+  c.seconds = fin(ev.seconds);
+  c.budget = fin(ev.budget_usd);
+  c.forecast = isObj(ev.forecast) ? ev.forecast : null;
+  c.cycle = st.cycle.n;
+  c.ts = st.curTs;
+  if (c.problem) getProblem(st, c.problem);
+  if (s.cards.indexOf(c.cid) < 0) s.cards.push(c.cid);
+  if (c.stage === 'scale') s.scaleCards++; else if (c.stage === 'pilot') s.pilotCards++;
+  var p = c.problem ? st.problems[c.problem] : null;
+  var size = (c.workers !== null && c.seconds !== null) ? ' (' + esc(fmtInt(c.workers)) + ' workers \u00d7 ' + esc(fmtInt(c.seconds)) + ' s)' : '';
+  var money = c.budget !== null ? '<b>' + esc(fmtUsd(c.budget)) + '</b>' : 'an unrecorded budget';
+  var label = sName(st, c.sid, c.problem);
+  var what, tag;
+  if (c.stage === 'pilot') { what = 'pilot of ' + label + ' for ' + money + size + '.'; tag = 'PILOT'; }
+  else if (c.stage === 'scale') { what = 'funded ' + label + ' with ' + money + size + '.'; tag = 'FUNDED'; }
+  else { what = esc(c.stage) + ' card for ' + label + ' with ' + money + size + '.'; tag = 'CARD'; }
+  var prefix = st.cycle.n !== null ? 'Cycle ' + esc(str(st.cycle.n)) + ': ' : '';
+  if (!prefix) what = what.charAt(0).toUpperCase() + what.slice(1);
+  addEntry(st, ev, 'card', tag, c.problem, prefix + what + ' ' + forecastSentence(c.forecast, p), null);
+}
+
+function applyResult(st, ev) {
+  var c = getCard(st, ev.cid);
+  c.result = ev;
+  if (!c.sid) c.sid = str(ev.sid, '');
+  if (!c.problem && typeof ev.problem === 'string') c.problem = ev.problem;
+  var s = getStrategy(st, c.sid, c.problem);
+  if (!c.problem && s.problem) c.problem = s.problem;
+  var p = c.problem ? getProblem(st, c.problem) : null;
+  var cost = usd0(ev.cost_usd);
+  var stage = c.stage || 'unknown';
+  st.spend.compute += cost;
+  addTo(st.spend.byStage, stage, cost);
+  var pk = c.problem || '(unknown)';
+  if (!st.spend.byProblem[pk]) st.spend.byProblem[pk] = dict();
+  addTo(st.spend.byProblem[pk], stage, cost);
+  var attempts = fin(ev.attempts);
+  if (attempts !== null && attempts > 0) s.attempts += attempts;
+  s.spent += cost;
+  s.nResults++;
+  var err = (isNil(ev.error) || ev.error === '' || ev.error === false) ? null : str(ev.error);
+  var best = fin(ev.best);
+  var newBest = bool(ev.new_best), beat = bool(ev.beat_record);
+  if (err) { s.nErrors++; s.lastError = err; } else { s.lastError = null; }
+  if (best !== null && (s.best === null || isBetter(p, best, s.best))) s.best = best;
+  var label = sName(st, c.sid, c.problem);
+  var html;
+  if (err) {
+    html = 'Card for ' + label + ' <b class="neg">failed</b>: ' + esc(clip(err, 400)) + '.';
+    if (cost > 0) html += ' It still cost ' + esc(fmtUsd(cost)) + '.';
+  } else {
+    var verdict = beat ? '<b class="pos">BEAT THE RECORD</b>' : (newBest ? '<b class="pos">new best</b>' : 'no new best');
+    html = 'Result for ' + label + ': best <b class="mono">' + esc(fmtScore(best, p)) + '</b> (' + verdict + ')';
+    if (attempts !== null) html += ' from ' + esc(fmtCount(attempts)) + ' attempts';
+    html += ', cost ' + esc(fmtUsd(cost)) + '.';
+  }
+  var e = addEntry(st, ev, 'result', err ? 'FAILED' : 'RESULT', c.problem, html, {bad: !!err, good: !err && (newBest || beat), big: !err && beat});
+  c.resultEntry = e.id;
+  s.lastResultEntry = e.id;
+  s.lastResultHasPrice = false;
+}
+
+function applyPrice(st, ev) {
+  var s = getStrategy(st, ev.sid, ev.problem);
+  var cpa = fin(ev.cost_per_attempt), plo = fin(ev.p_lo), phi = fin(ev.p_hi);
+  var bandLo = null, bandHi = null;
+  var xlo = has(ev, 'usd_lo') ? ev.usd_lo : ev.usd_to_record_lo;
+  var xhi = has(ev, 'usd_hi') ? ev.usd_hi : ev.usd_to_record_hi;
+  if (xlo !== undefined || xhi !== undefined) {
+    bandLo = priceNum(xlo);
+    bandHi = priceNum(xhi);
+  } else if (cpa !== null && cpa > 0 && plo !== null && phi !== null) {
+    bandLo = phi > 0 ? cpa / phi : Infinity;
+    bandHi = plo > 0 ? cpa / plo : Infinity;
+  }
+  var pr = {usd: priceNum(ev.usd_to_record), model: str(ev.model, ''), n: fin(ev.n_attempts), cpa: cpa, p: fin(ev.p_attempt),
+            pLo: plo, pHi: phi, bandLo: bandLo, bandHi: bandHi, xi: fin(ev.xi), sigma: fin(ev.sigma), u: fin(ev.u), ts: st.curTs};
+  s.prevPrice = s.price;
+  s.price = pr;
+  s.priceHistory.push(pr.usd);
+  if (s.priceHistory.length > 60) s.priceHistory.shift();
+  var txt = 'Price' + (pr.model ? ' (' + esc(pr.model) + ')' : '') + ': ';
+  if (isFinite(pr.usd)) txt += '<b>' + esc(fmtPrice(pr.usd)) + '</b> to record';
+  else txt += '<b class="neg">unreachable</b>';
+  var band = bandText(pr);
+  if (band) txt += ', band ' + esc(band);
+  if (s.prevPrice) txt += ' (was ' + esc(fmtPrice(s.prevPrice.usd)) + ')';
+  txt += '.';
+  if (s.lastResultEntry !== null && !s.lastResultHasPrice && st.log[s.lastResultEntry]) {
+    var e = st.log[s.lastResultEntry];
+    e.html += ' ' + txt;
+    e.events.push(ev);
+    s.lastResultHasPrice = true;
+  } else {
+    addEntry(st, ev, 'result', 'PRICE', s.problem, 'Price update for ' + sName(st, s.sid, s.problem) + '. ' + txt, null);
+  }
+}
+
+function applyReferee(st, ev) {
+  var c = getCard(st, ev.cid);
+  c.referee = ev;
+  if (!c.sid && !isNil(ev.sid)) c.sid = str(ev.sid, '');
+  var s = c.sid ? st.strategies[c.sid] : null;
+  var pslug = c.problem || (s && s.problem ? s.problem : '');
+  var p = pslug ? st.problems[pslug] : null;
+  var f = isObj(ev.forecast) ? ev.forecast : c.forecast;
+  var out = isObj(ev.outcome) ? ev.outcome : null;
+  var res = c.result;
+  var newBest = out ? boolOrNull(out.new_best) : null;
+  var beat = out ? boolOrNull(out.beat_record) : null;
+  if (newBest === null && res) newBest = boolOrNull(res.new_best);
+  if (beat === null && res) beat = boolOrNull(res.beat_record);
+  var pNb = f ? fin(f.p_new_best) : null, pRec = f ? fin(f.p_record) : null;
+  var bNb = fin(ev.brier_new_best), bRec = fin(ev.brier_record);
+  if (bNb === null && pNb !== null && newBest !== null) bNb = Math.pow(pNb - (newBest ? 1 : 0), 2);
+  if (bRec === null && pRec !== null && beat !== null) bRec = Math.pow(pRec - (beat ? 1 : 0), 2);
+  var inInt = boolOrNull(ev.in_interval);
+  var surprise = fin(ev.surprise);
+  var isSurprise = (surprise !== null && surprise > 2) || inInt === false;
+  st.forecasts.push({cid: c.cid, sid: c.sid, problem: pslug, stage: c.stage, source: (f && !isNil(f.source)) ? str(f.source) : 'unknown',
+                     pNewBest: pNb, pRecord: pRec, newBest: newBest, beatRecord: beat, brierNewBest: bNb, brierRecord: bRec,
+                     inInterval: inInt, surprise: surprise, isSurprise: isSurprise, ts: st.curTs});
+  var txt = 'Forecast scored: Brier <b class="mono">' + esc(fmtBrier(bNb)) + '</b>';
+  if (pNb !== null && newBest !== null) txt += ' (said ' + esc(fmtPct(pNb)) + ' for a new best, ' + (newBest ? 'it happened' : 'it did not happen') + ')';
+  txt += '.';
+  if (isSurprise) {
+    txt += ' <b class="warn-t">Surprise' + (surprise !== null ? ' ' + esc(trimZeros(surprise.toFixed(1))) : '') + '</b>';
+    if (inInt === false) {
+      txt += ': the result landed outside the forecast interval';
+      if (f && fin(f.best_q10) !== null && fin(f.best_q90) !== null) txt += ' [' + esc(fmtScore(f.best_q10, p)) + ', ' + esc(fmtScore(f.best_q90, p)) + ']';
+    }
+    txt += '.';
+  } else if (surprise !== null || inInt === true) {
+    txt += ' As expected.';
+  }
+  if (c.resultEntry !== null && st.log[c.resultEntry]) {
+    var e = st.log[c.resultEntry];
+    e.html += ' ' + txt;
+    e.events.push(ev);
+    if (isSurprise) e.surprise = true;
+  } else {
+    addEntry(st, ev, 'result', 'REFEREE', pslug, 'Referee on card <span class="mono">' + esc(c.cid) + '</span>. ' + txt, {surprise: isSurprise});
+  }
+}
+
+function allocRowText(st, row) {
+  var bits = ['price ' + esc(fmtPrice(row.usd))];
+  if (row.p !== null) bits.push(esc(fmtPct(row.p)) + ' record chance');
+  if (row.draw !== null) bits.push('draw ' + esc(fmtDraw(row.draw)));
+  return sName(st, row.sid, row.problem) + ' (' + bits.join(', ') + ')';
+}
+function applyAllocation(st, ev) {
+  var rows = Array.isArray(ev.table) ? ev.table : [];
+  var cyc = isNil(ev.cycle) ? st.cycle.n : ev.cycle;
+  var a = {idx: st.allocations.length, cycle: cyc, ts: st.curTs, order: st.evIndex, budgetLeft: fin(ev.budget_left_usd),
+           tranche: fin(ev.tranche_usd), note: str(ev.note, ''), rows: [], chosen: dict()};
+  var funded = [], passed = [], i, r, sid, s, row;
+  for (i = 0; i < rows.length; i++) {
+    r = rows[i];
+    if (!isObj(r)) continue;
+    sid = str(r.sid, '');
+    if (sid === '') continue;
+    s = getStrategy(st, sid, r.problem);
+    row = {sid: sid, problem: s.problem || '', usd: priceNum(r.usd_to_record), p: fin(r.p_record_tranche), draw: fin(r.draw),
+           trust: fin(r.trust), chosen: bool(r.chosen), workers: fin(r.workers), seconds: fin(r.seconds)};
+    a.rows.push(row);
+    s.lastAlloc = {idx: a.idx, cycle: cyc, row: row};
+    if (row.chosen) { a.chosen[sid] = true; s.funded++; funded.push(allocRowText(st, row)); }
+    else passed.push(allocRowText(st, row));
+  }
+  st.allocations.push(a);
+  var html = '<b>' + (isNil(cyc) ? 'Allocation' : 'Cycle ' + esc(str(cyc)) + ' allocation') + '.</b> ';
+  var head = [];
+  if (a.budgetLeft !== null) head.push(esc(fmtUsd(a.budgetLeft)) + ' of the compute budget left');
+  if (a.tranche !== null) head.push('tranche ' + esc(fmtUsd(a.tranche)));
+  if (head.length) html += head.join(', ') + '. ';
+  if (funded.length) html += '<b>Funded ' + funded.length + ' of ' + a.rows.length + ':</b> ' + funded.join('; ') + '. ';
+  else html += 'Nothing was funded. ';
+  if (passed.length) {
+    html += 'Passed over: ' + passed.slice(0, 6).join('; ');
+    if (passed.length > 6) html += ' and ' + (passed.length - 6) + ' more';
+    html += '. ';
+  }
+  if (a.note) html += '<span class="lnote">' + esc(clip(a.note, 600)) + '</span>';
+  addEntry(st, ev, 'alloc', 'ALLOCATION', null, html, null);
+}
+
+function applyCandidate(st, ev) {
+  var p = getProblem(st, ev.problem);
+  var score = fin(ev.score);
+  var cand = {score: score, cid: str(ev.cid, ''), sid: str(ev.sid, ''), sha: str(ev.solution_sha, ''), path: str(ev.path, ''), ts: st.curTs};
+  p.candidates.push(cand);
+  if (score !== null && (p.best === null || isBetter(p, score, p.best.score))) {
+    p.best = cand;
+    p.history.push({ts: st.curTs, score: score, sid: cand.sid});
+  }
+  var rel = relation(p, score);
+  var gap = (score !== null && p.record !== null) ? Math.abs(score - p.record) : null;
+  var gapTxt = gap !== null ? '<span class="mono">' + esc(fmtGap(gap, p).replace('+', '')) + '</span>' : '';
+  var html = 'New best for ' + pName(st, p.slug) + ': <b class="mono">' + esc(fmtScore(score, p)) + '</b>';
+  if (cand.sid) html += ' from ' + sName(st, cand.sid, p.slug);
+  html += '. ';
+  if (rel === 'beats') html += '<b class="pos">Beats the record</b> by ' + gapTxt + '. Unverified until the checks pass.';
+  else if (rel === 'margin') html += 'Better than the record by ' + gapTxt + ', but short of the margin needed for #1.';
+  else if (rel === 'ties') html += 'Ties the record.';
+  else if (rel === 'behind') html += 'Still ' + gapTxt + ' behind the record.';
+  addEntry(st, ev, 'candidate', rel === 'beats' ? 'RECORD?' : 'NEW BEST', p.slug, html, {good: true, big: rel === 'beats'});
+}
+
+function applyVerification(st, ev) {
+  var p = getProblem(st, ev.problem);
+  var sha = str(ev.solution_sha, '') || '(no sha)';
+  var v = p.verifs[sha];
+  if (!v) { v = {checks: dict(), order: []}; p.verifs[sha] = v; }
+  var check = str(ev.check, '') || 'check';
+  var ok = boolOrNull(ev.ok);
+  if (!has(v.checks, check)) v.order.push(check);
+  v.checks[check] = {ok: ok, score: fin(ev.score), detail: str(ev.detail, ''), ts: st.curTs};
+  var verdict = ok === true ? '<b class="pos">passed</b>' : (ok === false ? '<b class="neg">FAILED</b>' : 'no verdict');
+  var html = 'Check <b>' + esc(check) + '</b> on the ' + pName(st, p.slug) + ' candidate <span class="mono">' + esc(clip(sha, 11)) + '</span>: ' + verdict;
+  if (fin(ev.score) !== null) html += ', score <span class="mono">' + esc(fmtScore(ev.score, p)) + '</span>';
+  html += '.';
+  if (!isNil(ev.detail) && ev.detail !== '') html += ' <span class="lnote">' + esc(clip(str(ev.detail), 500)) + '</span>';
+  addEntry(st, ev, 'candidate', ok === false ? 'CHECK FAILED' : 'CHECK', p.slug, html, {bad: ok === false, good: ok === true});
+}
+
+function applyLesson(st, ev) {
+  var slug = str(ev.problem, '');
+  var known = slug !== '' && slug !== 'global' && !!st.problems[slug];
+  var scope = known ? pName(st, slug) : (slug === '' || slug === 'global' ? 'all problems' : esc(slug));
+  var html = '<b>Lesson</b> (' + scope + '): ' + esc(clip(str(ev.text, '(no text)'), 2000));
+  var tail = [];
+  if (Array.isArray(ev.evidence) && ev.evidence.length) {
+    var evd = [];
+    for (var i = 0; i < ev.evidence.length && i < 12; i++) evd.push(esc(clip(str(ev.evidence[i]), 24)));
+    tail.push('evidence: ' + evd.join(', '));
+  }
+  if (!isNil(ev.proposer) && ev.proposer !== '') tail.push('by ' + esc(str(ev.proposer)));
+  if (tail.length) html += ' <span class="tiny">' + tail.join(' \u00b7 ') + '</span>';
+  addEntry(st, ev, 'insight', 'LESSON', known ? slug : null, html, null);
+}
+
+function applyLlm(st, ev) {
+  var cost = usd0(ev.cost_usd);
+  var purpose = str(ev.purpose, '') || '(unspecified)';
+  var model = str(ev.model, '') || '(unknown model)';
+  st.spend.llm += cost;
+  st.spend.llmCalls++;
+  addTo(st.spend.llmByPurpose, purpose, cost);
+  addTo(st.spend.llmByModel, model, cost);
+  var tin = fin(ev.tokens_in), tout = fin(ev.tokens_out), secs = fin(ev.seconds);
+  if (tin !== null) st.spend.tokensIn += tin;
+  if (tout !== null) st.spend.tokensOut += tout;
+  var html = 'LLM call (<b>' + esc(purpose) + '</b>) to <span class="mono">' + esc(model) + '</span>: ';
+  var bits = [];
+  if (tin !== null || tout !== null) bits.push(esc(fmtCount(tin)) + ' tokens in, ' + esc(fmtCount(tout)) + ' out');
+  bits.push(esc(fmtUsd(cost)));
+  if (secs !== null) bits.push(esc(fmtG(secs)) + ' s');
+  addEntry(st, ev, 'llm', 'LLM', null, html + bits.join(', ') + '.', null);
+}
+
+function applyNote(st, ev) {
+  addEntry(st, ev, 'insight', 'NOTE', null, esc(clip(str(ev.text, '(empty note)'), 2000)), null);
+}
+
+function applyCycle(st, ev) {
+  var phase = str(ev.phase, '');
+  if (!isNil(ev.n)) st.cycle.n = ev.n;
+  st.cycle.phase = phase;
+  var html = 'Cycle ' + esc(str(st.cycle.n, '?')) + (phase === 'start' ? ' started.' : (phase === 'end' ? ' ended.' : ' (' + esc(phase) + ').'));
+  var bits = [];
+  if (fin(ev.spent_compute_usd) !== null) bits.push(esc(fmtUsd(ev.spent_compute_usd)) + ' compute');
+  if (fin(ev.spent_llm_usd) !== null) bits.push(esc(fmtUsd(ev.spent_llm_usd)) + ' LLM');
+  if (bits.length) html += ' Spent so far: ' + bits.join(', ') + '.';
+  addEntry(st, ev, 'system', 'CYCLE', null, html, null);
+}
+
+function applyRunEnd(st, ev) {
+  st.run.ended = true;
+  st.run.endReason = str(ev.reason, '');
+  addEntry(st, ev, 'system', 'RUN END', null, '<b>Run ended.</b>' + (st.run.endReason ? ' Reason: ' + esc(clip(st.run.endReason, 600)) : ''), {alert: true});
+}
+
+function applyEvent(st, ev, type) {
+  switch (type) {
+    case 'run_start': applyRunStart(st, ev); break;
+    case 'arena_snapshot': applyArena(st, ev); break;
+    case 'strategy': applyStrategy(st, ev); break;
+    case 'card': applyCard(st, ev); break;
+    case 'result': applyResult(st, ev); break;
+    case 'price': applyPrice(st, ev); break;
+    case 'referee': applyReferee(st, ev); break;
+    case 'allocation': applyAllocation(st, ev); break;
+    case 'candidate': applyCandidate(st, ev); break;
+    case 'verification': applyVerification(st, ev); break;
+    case 'lesson': applyLesson(st, ev); break;
+    case 'llm_call': applyLlm(st, ev); break;
+    case 'note': applyNote(st, ev); break;
+    case 'cycle': applyCycle(st, ev); break;
+    case 'run_end': applyRunEnd(st, ev); break;
+    default:
+      st.unknownTypes[type] = (st.unknownTypes[type] || 0) + 1;
+      addEntry(st, ev, 'other', 'OTHER', (typeof ev.problem === 'string' && st.problems[ev.problem]) ? ev.problem : null,
+               'Event of unrecognised type <b>' + esc(type) + '</b>. Click to see the raw record.', null);
+  }
+}
+
+/* ---------- derived values ---------- */
+function checkSummary(p, sha, includePending) {
+  var v = sha ? p.verifs[sha] : null;
+  var out = {list: [], nOk: 0, nFail: 0, total: CHECKS.length};
+  var done = dict(), i, name, ch;
+  for (i = 0; i < CHECKS.length; i++) {
+    name = CHECKS[i];
+    done[name] = true;
+    ch = (v && has(v.checks, name)) ? v.checks[name] : null;
+    if (ch) out.list.push({name: name, ok: ch.ok, pending: false, detail: ch.detail, score: ch.score});
+    else if (includePending) out.list.push({name: name, ok: null, pending: true, detail: 'not run yet', score: null});
+  }
+  if (v) {
+    for (i = 0; i < v.order.length; i++) {
+      name = v.order[i];
+      if (done[name]) continue;
+      ch = v.checks[name];
+      out.list.push({name: name, ok: ch.ok, pending: false, detail: ch.detail, score: ch.score});
+      out.total++;
+    }
+  }
+  for (i = 0; i < out.list.length; i++) {
+    if (out.list[i].ok === true) out.nOk++;
+    else if (out.list[i].ok === false) out.nFail++;
+  }
+  return out;
+}
+function problemStatus(p) {
+  var b = p.best;
+  var out = {rel: 'none', gap: null, label: 'no candidate yet', cls: 'chip-muted', checks: null};
+  if (!b) return out;
+  out.rel = relation(p, b.score);
+  out.gap = (p.record !== null && b.score !== null) ? b.score - p.record : null;
+  var cs = checkSummary(p, b.sha, out.rel === 'beats' || out.rel === 'margin');
+  out.checks = cs;
+  if (out.rel === 'beats') {
+    if (cs.nFail > 0) { out.label = 'BEATS RECORD, CHECK FAILED (' + cs.nOk + '/' + cs.total + ' ok)'; out.cls = 'chip-bad'; }
+    else if (cs.nOk > 0) { out.label = 'BEATS RECORD, VERIFIED ' + cs.nOk + '/' + cs.total + ' checks'; out.cls = cs.nOk >= cs.total ? 'chip-strong' : 'chip-good'; }
+    else { out.label = 'BEATS RECORD (unverified)'; out.cls = 'chip-warn'; }
+  } else if (out.rel === 'margin') { out.label = 'better than record, short of #1 margin'; out.cls = 'chip-warn'; }
+  else if (out.rel === 'ties') { out.label = 'ties record'; out.cls = 'chip-info'; }
+  else if (out.rel === 'behind') { out.label = 'behind record'; out.cls = 'chip-neutral'; }
+  else { out.label = 'no record to compare'; out.cls = 'chip-muted'; }
+  return out;
+}
+function finalize(st) {
+  var i, k, s, c, p, cand, cs;
+  st.t0 = st.run.startTs !== null ? st.run.startTs : st.firstTs;
+
+  /* cards still in flight */
+  var inflight = 0, inflightN = 0;
+  for (i = 0; i < st.cardOrder.length; i++) {
+    c = st.cards[st.cardOrder[i]];
+    if (c.result) c.state = 'done';
+    else if (c.card) {
+      var limit = c.seconds !== null ? Math.max(3 * c.seconds, c.seconds + 600) : 3600;
+      var stale = st.lastTs !== null && c.ts !== null && (st.lastTs - c.ts) > limit;
+      c.state = (st.run.ended || stale) ? 'lost' : 'running';
+    } else c.state = 'unknown';
+    if (c.state === 'running') {
+      inflightN++;
+      if (c.budget !== null && c.budget > 0) inflight += c.budget;
+      s = c.sid ? st.strategies[c.sid] : null;
+      if (s) s.running++;
+    }
+  }
+
+  /* strategy status: pilot / funded n times / dropped (never chosen in the last 3 allocations) */
+  var nA = st.allocations.length;
+  for (i = 0; i < st.strategyOrder.length; i++) {
+    s = st.strategies[st.strategyOrder[i]];
+    var funded = Math.max(s.funded, s.scaleCards);
+    s.fundedTimes = funded;
+    var dropped = false;
+    if (nA >= 3 && st.allocations[nA - 3].order > s.order && s.running === 0) {
+      dropped = !(st.allocations[nA - 1].chosen[s.sid] || st.allocations[nA - 2].chosen[s.sid] || st.allocations[nA - 3].chosen[s.sid]);
+    }
+    s.statusNote = '';
+    if (dropped) {
+      s.status = 'dropped'; s.statusRank = 0; s.statusLabel = 'dropped';
+      s.statusNote = funded > 0 ? 'funded ' + funded + '\u00d7 earlier' : 'never funded';
+    } else if (funded > 0) {
+      s.status = 'funded'; s.statusRank = 100 + funded; s.statusLabel = 'funded ' + funded + '\u00d7';
+    } else if (s.cards.length > 0) {
+      s.status = 'pilot'; s.statusRank = 50; s.statusLabel = 'pilot';
+      if (s.nResults === 0) s.statusNote = s.running > 0 ? 'running' : 'no result';
+      else if (s.nErrors === s.nResults) { s.status = 'failed'; s.statusRank = 40; s.statusLabel = 'pilot failed'; }
+      else s.statusNote = 'priced, not funded yet';
+    } else {
+      s.status = 'proposed'; s.statusRank = 10; s.statusLabel = 'proposed';
+    }
+  }
+
+  /* problem status and verified improvements */
+  var vi = 0, viFull = 0, minOk = null;
+  for (i = 0; i < st.problemOrder.length; i++) {
+    p = st.problems[st.problemOrder[i]];
+    p.status = problemStatus(p);
+    var seen = dict();
+    for (k = 0; k < p.candidates.length; k++) {
+      cand = p.candidates[k];
+      if (cand.score === null || !cand.sha || seen[cand.sha]) continue;
+      seen[cand.sha] = true;
+      if (relation(p, cand.score) !== 'beats') continue;
+      cs = checkSummary(p, cand.sha, false);
+      if (cs.nOk > 0 && cs.nFail === 0) {
+        vi++;
+        if (cs.nOk >= CHECKS.length) viFull++;
+        if (minOk === null || cs.nOk < minOk) minOk = cs.nOk;
+      }
+    }
+  }
+  st.derived = {inflight: inflight, inflightN: inflightN, verified: vi, verifiedFull: viFull, minChecks: minOk,
+                usdPerVerified: vi > 0 ? (st.spend.compute + st.spend.llm) / vi : null};
+}
+
+function replay(events) {
+  var st = newState();
+  if (!Array.isArray(events)) events = [];
+  var start = 0, runs = 0, lastId = null, i, ev, id;
+  /* if several runs share one file, show the latest one */
+  for (i = 0; i < events.length; i++) {
+    ev = events[i];
+    if (isObj(ev) && ev.type === 'run_start') {
+      id = str(ev.run_id, '');
+      if (runs === 0) { runs = 1; lastId = id; }
+      else if (id !== lastId) { runs++; lastId = id; start = i; }
+    }
+  }
+  if (start > 0) events = events.slice(start);
+  st.run.runsInFile = runs;
+  st.shortNames = collectShortNames(events);
+  for (i = 0; i < events.length; i++) {
+    ev = events[i];
+    if (!isObj(ev)) continue;
+    st.evIndex = i;
+    var ts = fin(ev.ts);
+    if (ts !== null) {
+      if (ts > 1e11) ts = ts / 1000;
+      st.curTs = ts;
+      if (st.firstTs === null) st.firstTs = ts;
+      if (st.lastTs === null || ts > st.lastTs) st.lastTs = ts;
+    }
+    var type = (typeof ev.type === 'string' && ev.type !== '') ? ev.type : '(no type)';
+    st.counts[type] = (st.counts[type] || 0) + 1;
+    st.nEvents++;
+    try { applyEvent(st, ev, type); }
+    catch (e) { st.replayErrors++; st.lastReplayError = String(e && e.message ? e.message : e); }
+  }
+  try { finalize(st); }
+  catch (e2) { st.replayErrors++; st.lastReplayError = String(e2 && e2.message ? e2.message : e2); }
+  return st;
+}
+
+/* ---------- calibration (pure) ---------- */
+function binIndex(p) {
+  for (var i = BIN_EDGES.length - 2; i >= 0; i--) { if (p >= BIN_EDGES[i]) return i; }
+  return 0;
+}
+function newGroup(name) {
+  var bins = [];
+  for (var i = 0; i < BIN_EDGES.length - 1; i++) bins.push({lo: BIN_EDGES[i], hi: BIN_EDGES[i + 1], n: 0, sumP: 0, hits: 0});
+  return {name: name, n: 0, nScored: 0, sumP: 0, hits: 0, sumBrier: 0, nBrier: 0, inInt: 0, nInt: 0,
+          nRec: 0, sumPRec: 0, recHits: 0, surprises: 0, bins: bins};
+}
+function addForecast(g, f) {
+  g.n++;
+  if (f.isSurprise) g.surprises++;
+  if (f.brierNewBest !== null) { g.sumBrier += f.brierNewBest; g.nBrier++; }
+  if (f.inInterval !== null) { g.nInt++; if (f.inInterval) g.inInt++; }
+  if (f.pNewBest !== null && f.newBest !== null) {
+    var p = Math.min(1, Math.max(0, f.pNewBest));
+    var b = g.bins[binIndex(p)];
+    b.n++; b.sumP += p; if (f.newBest) b.hits++;
+    g.nScored++; g.sumP += p; if (f.newBest) g.hits++;
+  }
+  if (f.pRecord !== null && f.beatRecord !== null) {
+    g.nRec++; g.sumPRec += Math.min(1, Math.max(0, f.pRecord)); if (f.beatRecord) g.recHits++;
+  }
+}
+function calibration(forecasts) {
+  var groups = dict(), order = [], all = newGroup('all sources'), i, f, g, name;
+  for (i = 0; i < forecasts.length; i++) {
+    f = forecasts[i];
+    name = f.source || 'unknown';
+    g = groups[name];
+    if (!g) { g = newGroup(name); groups[name] = g; order.push(name); }
+    addForecast(g, f);
+    addForecast(all, f);
+  }
+  var sorted = [];
+  for (i = 0; i < SOURCE_ORDER.length; i++) { if (groups[SOURCE_ORDER[i]]) sorted.push(SOURCE_ORDER[i]); }
+  for (i = 0; i < order.length; i++) { if (SOURCE_ORDER.indexOf(order[i]) < 0) sorted.push(order[i]); }
+  return {groups: groups, order: sorted, all: all};
+}
+/* Wilson score interval for k successes out of n */
+function wilson(k, n, z) {
+  if (n <= 0) return [0, 1];
+  var ph = k / n, z2 = z * z, den = 1 + z2 / n;
+  var c = (ph + z2 / (2 * n)) / den;
+  var h = z * Math.sqrt(ph * (1 - ph) / n + z2 / (4 * n * n)) / den;
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+
+/* ======================================================================
+   5. Rendering
+   ====================================================================== */
+var ui = {
+  paused: false,
+  marketProblem: 'all', sortKey: 'price', sortDir: 1, openStrategies: dict(),
+  logProblem: 'all', surprisesOnly: false, logLimit: LOG_PAGE, openLog: dict(),
+  logKinds: {card: true, result: true, alloc: true, strategy: true, candidate: true, insight: true, system: true, llm: false, other: true}
+};
+var app = {
+  state: replay([]), parse: {events: [], bad: 0, truncated: false, lines: 0}, text: null,
+  status: 'init', error: '', lastOk: 0, lastChange: 0, inflight: false, hasLoaded: false, localFile: null,
+  renderErrors: dict()
+};
+var htmlCache = dict();
+function $(id) { return document.getElementById(id); }
+function setHtml(id, html, keepScroll) {
+  var el = $(id);
+  if (!el || htmlCache[id] === html) return;
+  var top = keepScroll ? el.scrollTop : 0;
+  el.innerHTML = html;
+  htmlCache[id] = html;
+  if (keepScroll) el.scrollTop = top;
+}
+function chipBtn(act, arg, label, on, color) {
+  return '<button type="button" class="fchip' + (on ? ' on' : '') + '" data-act="' + act + '" data-arg="' + esc(arg) + '">' +
+    (color ? '<span class="swatch" style="background:' + color + '"></span> ' : '') + esc(label) + '</button>';
+}
+function problemChip(st, slug) {
+  if (!slug) return '';
+  var p = st.problems[slug];
+  return '<span class="pchip" style="background:' + (p ? p.color : '#475569') + '" title="' + esc(slug) + '">' + esc(pPlain(st, slug)) + '</span>';
+}
+function kv(label, value, cls) {
+  return '<div class="kv"><span class="k">' + esc(label) + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + value + '</span></div>';
+}
+function kvList(items) {
+  var h = '<div class="kvl">';
+  for (var i = 0; i < items.length; i++) h += '<div><span class="k">' + esc(items[i][0]) + '</span><span class="mono">' + esc(items[i][1]) + '</span></div>';
+  return h + '</div>';
+}
+
+/* ---------- header ---------- */
+function elapsedSeconds(st) {
+  if (isNil(st.t0) || isNil(st.lastTs)) return null;
+  var end = st.lastTs;
+  if (!st.run.ended && !app.localFile) {
+    var now = Date.now() / 1000;
+    if (now >= st.lastTs && now - st.lastTs < 900) end = now;   /* keep ticking while the run is live */
+  }
+  return Math.max(0, end - st.t0);
+}
+function meter(label, spent, budget, pending) {
+  var pct = 0, pend = 0, cls = '', txt = fmtUsd(spent);
+  if (budget !== null && budget > 0) {
+    pct = Math.max(0, Math.min(100, 100 * spent / budget));
+    pend = Math.max(0, Math.min(100 - pct, 100 * pending / budget));
+    txt += ' / ' + fmtUsd(budget);
+    if (spent > budget) cls = ' over'; else if (spent > 0.8 * budget) cls = ' near';
+  }
+  var title = label + ': spent ' + fmtUsd(spent) + (budget !== null ? ' of a ' + fmtUsd(budget) + ' budget' : ' (no budget recorded)') +
+    (pending > 0 ? '; another ' + fmtUsd(pending) + ' is committed to cards still running' : '');
+  return '<div class="meter' + cls + '" title="' + esc(title) + '"><div class="meter-top"><span class="k">' + esc(label) + '</span>' +
+    '<span class="v mono">' + esc(txt) + '</span></div><div class="mbar"><div class="mfill" style="width:' + pct.toFixed(1) + '%"></div>' +
+    (pend > 0 ? '<div class="mpend" style="width:' + pend.toFixed(1) + '%"></div>' : '') + '</div>' +
+    (pending > 0 ? '<div class="tiny">+' + esc(fmtUsd(pending)) + ' in flight</div>' : '') + '</div>';
+}
+function renderHeader(st) {
+  var d = st.derived, h = '';
+  h += '<div class="hstat"><span class="k">run</span><span class="v mono">' + (st.run.id ? esc(clip(st.run.id, 40)) : '\u2013') + '</span></div>';
+  h += '<div class="hstat"><span class="k">elapsed</span><span class="v mono" id="h-elapsed">' + esc(fmtDur(elapsedSeconds(st))) + '</span></div>';
+  var phase = st.run.ended ? 'run ended' : (st.cycle.phase === 'start' ? 'in progress' : (st.cycle.phase === 'end' ? 'finished' : ''));
+  h += '<div class="hstat"><span class="k">cycle</span><span class="v mono">' + (isNil(st.cycle.n) ? '\u2013' : esc(str(st.cycle.n))) +
+    (phase ? ' <small>' + esc(phase) + '</small>' : '') + '</span></div>';
+  if (d.verified > 0 && d.usdPerVerified !== null) {
+    var sub = d.verified + (d.verified === 1 ? ' improvement' : ' improvements');
+    if (d.verifiedFull < d.verified) sub += ', ' + d.minChecks + '/' + CHECKS.length + ' checks so far';
+    h += '<div class="hstat hl" title="Total spend (compute + LLM) divided by the number of record-beating candidates whose verification checks have all passed so far.">' +
+      '<span class="k">$ per verified improvement</span><span class="v mono">' + esc(fmtUsd(d.usdPerVerified)) + ' <small>' + esc(sub) + '</small></span></div>';
+  }
+  setHtml('h-run', h);
+  setHtml('h-meters', meter('compute $', st.spend.compute, st.run.budgetCompute, d.inflight) + meter('LLM $', st.spend.llm, st.run.budgetLlm, 0));
+}
+
+/* ---------- banner (waiting state and warnings) ---------- */
+function renderBanner(st) {
+  var h = '', k;
+  if (st.nEvents === 0) {
+    var msg;
+    if (app.localFile) msg = 'The chosen file has no readable ledger events.';
+    else if (app.status === 'init') msg = 'Loading the ledger\u2026';
+    else if (app.status === 'ok') msg = app.parse.lines > 0 ? 'The file at this address has no readable ledger events yet.' : 'The ledger is empty. Waiting for the first event\u2026';
+    else msg = 'Waiting for the ledger\u2026';
+    h += '<div class="wait"><div class="wait-title">' + esc(msg) + '</div>';
+    h += '<div>Looking for <span class="mono">' + esc(LEDGER_URL) + '</span>' + (app.error ? ' (' + esc(app.error) + ')' : '') +
+      '. Checking every ' + esc(String(POLL_MS / 1000)) + ' s; the dashboard fills in by itself as soon as events arrive.</div>';
+    if (window.location.protocol === 'file:') {
+      h += '<div class="tiny">This page was opened from disk, where browsers block fetch. Serve the folder with <span class="mono">python3 -m http.server</span>, or pick the ledger file here:</div>';
+    } else {
+      h += '<div class="tiny">Point at another ledger with <span class="mono">?ledger=path/to/ledger.jsonl</span>, or open a local file:</div>';
+    }
+    h += '<div><input type="file" id="file-in" accept=".jsonl,.json,.txt"></div></div>';
+  }
+  var notes = [];
+  if (app.parse.bad > 0) notes.push(app.parse.bad + (app.parse.bad === 1 ? ' unreadable line skipped' : ' unreadable lines skipped'));
+  if (app.parse.truncated) notes.push('the last line is incomplete (still being written)');
+  if (st.run.runsInFile > 1) notes.push('the ledger holds ' + st.run.runsInFile + ' runs; showing the latest');
+  var unk = [];
+  for (k in st.unknownTypes) unk.push(k + ' \u00d7' + st.unknownTypes[k]);
+  if (unk.length) notes.push('unrecognised event types: ' + unk.join(', '));
+  if (st.replayErrors > 0) notes.push(st.replayErrors + ' event(s) could not be interpreted (' + str(st.lastReplayError, '') + ')');
+  for (k in app.renderErrors) notes.push('display problem in ' + k + ': ' + app.renderErrors[k]);
+  if (st.nEvents > 0 && app.status === 'error') notes.push('cannot reach the ledger right now (' + app.error + '); showing the last data received');
+  if (notes.length) h += '<div class="notice">' + esc(notes.join(' \u00b7 ')) + '</div>';
+  setHtml('banner', h);
+  var foot = 'ledger: ' + (app.localFile ? app.localFile + ' (local file)' : LEDGER_URL) + ' \u00b7 ' + fmtInt(st.nEvents) + ' events \u00b7 polling every ' +
+    (POLL_MS / 1000) + ' s \u00b7 everything on this page is recomputed from the ledger; window.__state holds the replayed state';
+  setHtml('foot', esc(foot));
+}
+
+/* ---------- problem cards ---------- */
+function makeScale(vals, rec, margin, integer, maximize) {
+  var i, g, lo = Infinity, hi = -Infinity;
+  for (i = 0; i < vals.length; i++) { if (vals[i] < lo) lo = vals[i]; if (vals[i] > hi) hi = vals[i]; }
+  var sc = {mode: 'linear', f: function (v) { return v; }, lo: lo, hi: hi, ticks: []};
+  var gmax = 0, gmin = Infinity;
+  if (rec !== null && !integer) {
+    for (i = 0; i < vals.length; i++) {
+      g = Math.abs(vals[i] - rec);
+      if (g > gmax) gmax = g;
+      if (g > 0 && g < gmin) gmin = g;
+    }
+  }
+  if (gmax > 0 && isFinite(gmin) && gmax / gmin > 30) {
+    /* gaps to the record span orders of magnitude: symmetric log scale of the gap */
+    var th = (margin !== null && margin > 0) ? Math.min(margin, gmin) : gmin;
+    sc.mode = 'log';
+    sc.f = function (v) {
+      var d = v - rec;
+      var a = Math.log(1 + Math.abs(d) / th) / Math.LN10;
+      return d < 0 ? -a : a;
+    };
+    var kLo = Math.ceil(Math.log(th) / Math.LN10 - 1e-6), kHi = Math.floor(Math.log(gmax) / Math.LN10 + 1e-6);
+    var step = Math.max(1, Math.ceil((kHi - kLo + 1) / 4));
+    for (var k = kHi; k >= kLo; k -= step) {
+      var gv = Math.pow(10, k);
+      if (hi > rec && gv <= (hi - rec) * 1.000001) sc.ticks.push({v: rec + gv, label: '+1e' + k});
+      if (lo < rec && gv <= (rec - lo) * 1.000001) sc.ticks.push({v: rec - gv, label: '-1e' + k});
+    }
+    sc.lo = sc.f(lo);
+    sc.hi = sc.f(hi);
+  } else {
+    if (lo !== rec) sc.ticks.push({v: lo, label: null});
+    if (hi !== rec && hi !== lo) sc.ticks.push({v: hi, label: null});
+  }
+  var range = sc.hi - sc.lo;
+  if (!(range > 0)) range = (sc.mode === 'log') ? 1 : (integer ? 2 : (Math.abs(sc.lo) * 0.001 || 1));
+  var padLo = 0.12 * range, padHi = 0.12 * range;
+  if (rec !== null) {
+    /* leave visible room on the side of the record where we would be beating it */
+    var fr = sc.f(rec);
+    if (maximize) { if (sc.hi + padHi < fr + 0.2 * range) padHi = fr + 0.2 * range - sc.hi; }
+    else { if (sc.lo - padLo > fr - 0.2 * range) padLo = sc.lo - (fr - 0.2 * range); }
+  }
+  sc.lo -= padLo;
+  sc.hi += padHi;
+  return sc;
+}
+function bestChartSvg(st, p) {
+  var W = 440, H = 150, L = 88, R = 10, T = 10, B = 20;
+  var pw = W - L - R, ph = H - T - B;
+  var pts = p.history, rec = p.record, i;
+  var vals = [];
+  for (i = 0; i < pts.length; i++) vals.push(pts[i].score);
+  if (rec !== null) vals.push(rec);
+  if (vals.length === 0) return '<div class="empty">No scores yet for this problem.</div>';
+  var margin = (p.target !== null && rec !== null) ? Math.abs(p.target - rec) : null;
+  var sc = makeScale(vals, rec, margin, p.integer, p.maximize === true);
+  var t0 = isNil(st.t0) ? (pts.length && pts[0].ts !== null ? pts[0].ts : 0) : st.t0;
+  var t1 = isNil(st.lastTs) ? t0 + 60 : st.lastTs;
+  if (!(t1 - t0 >= 60)) t1 = t0 + 60;
+  function X(ts) {
+    var f = (ts - t0) / (t1 - t0);
+    if (!(f >= 0)) f = 0;
+    if (f > 1) f = 1;
+    return L + f * pw;
+  }
+  function Y(v) {
+    var f = (sc.f(v) - sc.lo) / (sc.hi - sc.lo);
+    if (!(f >= 0)) f = 0;
+    if (f > 1) f = 1;
+    return T + (1 - f) * ph;
+  }
+  var s = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Best score so far over time">';
+  s += '<rect x="' + L + '" y="' + T + '" width="' + pw + '" height="' + ph + '" fill="#ffffff" stroke="#c3cad6"/>';
+  var yr = null;
+  if (rec !== null) {
+    yr = Y(rec);
+    if (p.maximize === true) s += '<rect x="' + L + '" y="' + T + '" width="' + pw + '" height="' + r1(Math.max(0, yr - T)) + '" fill="#dcfce7"/>';
+    else s += '<rect x="' + L + '" y="' + r1(yr) + '" width="' + pw + '" height="' + r1(Math.max(0, T + ph - yr)) + '" fill="#dcfce7"/>';
+  }
+  for (i = 0; i < sc.ticks.length; i++) {
+    var tk = sc.ticks[i], ty = Y(tk.v);
+    if (yr !== null && Math.abs(ty - yr) < 11) continue;   /* too close to the record line to label */
+    s += '<line x1="' + L + '" x2="' + (L + pw) + '" y1="' + r1(ty) + '" y2="' + r1(ty) + '" stroke="#e2e6ec"/>';
+    s += '<text x="' + (L - 5) + '" y="' + r1(ty + 3.5) + '" text-anchor="end" class="axis">' + esc(tk.label !== null ? tk.label : fmtScore(tk.v, p)) + '</text>';
+  }
+  if (yr !== null) {
+    s += '<line x1="' + L + '" x2="' + (L + pw) + '" y1="' + r1(yr) + '" y2="' + r1(yr) + '" stroke="#0f172a" stroke-width="1.5" stroke-dasharray="6 4"/>';
+    /* label sits inside the green band, at the left, where the best-so-far line rarely runs */
+    var ly = (p.maximize === true) ? Math.max(T + 10, yr - 5) : Math.min(T + ph - 3, yr + 12);
+    s += '<text x="' + (L + 5) + '" y="' + r1(ly) + '" class="axis rec">record ' + esc(fmtScore(rec, p)) + '</text>';
+    if (sc.mode === 'log') s += '<text x="' + (L - 5) + '" y="' + r1(yr + 3.5) + '" text-anchor="end" class="axis rec">gap 0</text>';
+  }
+  if (pts.length) {
+    var d = 'M' + r1(X(pts[0].ts)) + ' ' + r1(Y(pts[0].score));
+    for (i = 1; i < pts.length; i++) d += ' H' + r1(X(pts[i].ts)) + ' V' + r1(Y(pts[i].score));
+    d += ' H' + (L + pw);
+    s += '<path d="' + d + '" fill="none" stroke="' + p.color + '" stroke-width="2.2" stroke-linejoin="round"/>';
+    for (i = 0; i < pts.length; i++) {
+      var lastPt = i === pts.length - 1;
+      var tip = fmtScore(pts[i].score, p) + (pts[i].ts !== null ? ' at ' + fmtClock(pts[i].ts - t0) : '') + (pts[i].sid ? ' by ' + sPlain(st, pts[i].sid, p.slug) : '');
+      s += '<circle cx="' + r1(X(pts[i].ts)) + '" cy="' + r1(Y(pts[i].score)) + '" r="' + (lastPt ? 4.5 : 3) + '" fill="' + (lastPt ? p.color : '#ffffff') +
+        '" stroke="' + p.color + '" stroke-width="1.5"><title>' + esc(tip) + '</title></circle>';
+    }
+  } else {
+    s += '<text x="' + (L + pw / 2) + '" y="' + (T + ph / 2) + '" text-anchor="middle" class="axis">no candidates yet</text>';
+  }
+  s += '<text x="' + L + '" y="' + (H - 5) + '" class="axis">0</text>';
+  s += '<text x="' + (L + pw / 2) + '" y="' + (H - 5) + '" text-anchor="middle" class="axis">time since start</text>';
+  s += '<text x="' + (L + pw) + '" y="' + (H - 5) + '" text-anchor="end" class="axis">' + esc(fmtDur(t1 - t0)) + '</text>';
+  s += '</svg>';
+  s += '<div class="tiny chart-cap">' + (sc.mode === 'log' ? 'Our best so far, on a log scale of the gap to the record.' : 'Our best so far.') +
+    ' Dashed line: record. Green band: beats the record.</div>';
+  return s;
+}
+function problemCard(st, p) {
+  var stt = p.status || problemStatus(p);
+  var dir = p.maximize === true ? 'maximise' : (p.maximize === false ? 'minimise' : 'direction unknown');
+  var h = '<div class="pcard" style="border-top-color:' + p.color + '">';
+  h += '<div class="pcard-head"><div class="pcard-title" data-act="focus-problem" data-arg="' + esc(p.slug) + '" title="Filter the market and the log to this problem">' +
+    '<div class="ptitle">' + esc(p.title || p.slug) + '</div><div class="tiny mono">' + esc(p.slug) + ' \u00b7 ' + dir + '</div></div>' +
+    '<span class="chip ' + stt.cls + '">' + esc(stt.label) + '</span></div>';
+  if (p.snapshots === 0) h += '<div class="tiny">No arena snapshot for this problem yet.</div>';
+  var cmp = p.maximize === true ? '\u2265 ' : (p.maximize === false ? '\u2264 ' : '');
+  h += '<div class="pgrid">';
+  h += kv('record' + (p.leader ? ' \u00b7 ' + p.leader : ''), esc(fmtScore(p.record, p)), '');
+  h += kv('needed for #1', p.target !== null ? esc(cmp + fmtScore(p.target, p)) : '\u2013', '');
+  h += kv('our best', p.best ? esc(fmtScore(p.best.score, p)) : '\u2013', 'big');
+  var gapHtml = '\u2013';
+  if (stt.gap !== null) {
+    var ahead = p.maximize === true ? stt.gap > 0 : stt.gap < 0;
+    var word = stt.gap === 0 ? 'level' : (ahead ? 'ahead' : 'behind');
+    gapHtml = '<span class="' + (stt.gap === 0 ? '' : (ahead ? 'pos' : 'neg')) + '">' + esc(fmtGap(stt.gap, p)) + '</span> <small>' + word + '</small>';
+  }
+  h += kv('gap to record (ours \u2212 record)', gapHtml, '');
+  h += '</div>';
+  if (stt.checks && stt.checks.list.length) {
+    h += '<div class="checks">';
+    for (var j = 0; j < stt.checks.list.length; j++) {
+      var ch = stt.checks.list[j];
+      var sym = ch.ok === true ? '\u2713' : (ch.ok === false ? '\u2717' : '\u25cb');
+      var cls = ch.ok === true ? 'ok' : (ch.ok === false ? 'fail' : 'pend');
+      h += '<span class="check ' + cls + '" title="' + esc(ch.detail || '') + '">' + sym + ' ' + esc(ch.name) + (ch.pending ? ' (pending)' : '') + '</span>';
+    }
+    h += '</div>';
+  }
+  h += bestChartSvg(st, p);
+  var foot = [];
+  if (p.best) foot.push('best by ' + sPlain(st, p.best.sid, p.slug) + (p.best.cid ? ', card ' + p.best.cid : ''));
+  foot.push(p.candidates.length + (p.candidates.length === 1 ? ' candidate' : ' candidates'));
+  if (p.best && p.best.sha) foot.push('sha ' + clip(p.best.sha, 13));
+  h += '<div class="tiny pfoot">' + esc(foot.join(' \u00b7 ')) + '</div></div>';
+  return h;
+}
+function renderProblems(st) {
+  if (st.problemOrder.length === 0) {
+    setHtml('problems', '<div class="empty">No problems yet. A card appears for each problem with its first arena snapshot.</div>');
+    return;
+  }
+  var h = '';
+  for (var i = 0; i < st.problemOrder.length; i++) h += problemCard(st, st.problems[st.problemOrder[i]]);
+  setHtml('problems', h);
+}
+
+/* ---------- strategy market ---------- */
+function bestKey(st, s) {
+  if (s.best === null) return null;
+  var p = s.problem ? st.problems[s.problem] : null;
+  if (!p || p.record === null) return s.best;
+  var g = p.maximize === true ? p.record - s.best : s.best - p.record;
+  return g / (Math.abs(p.record) || 1);
+}
+function sortVal(st, s, key) {
+  switch (key) {
+    case 'problem': return s.problem ? pPlain(st, s.problem) : null;
+    case 'sid': return s.sid;
+    case 'hypothesis': return s.hypothesis || null;
+    case 'kernel': return s.kernel || null;
+    case 'proposer': return s.proposer || null;
+    case 'attempts': return s.attempts;
+    case 'spent': return s.spent;
+    case 'price': return s.price ? s.price.usd : null;
+    case 'ptranche': return s.lastAlloc ? s.lastAlloc.row.p : null;
+    case 'best': return bestKey(st, s);
+    case 'status': return s.statusRank;
+  }
+  return null;
+}
+function natCmp(a, b) {
+  try { return a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}); }
+  catch (e) { return a < b ? -1 : (a > b ? 1 : 0); }
+}
+function strategyDetail(st, s, p) {
+  var h = '<div class="sd-grid"><div>';
+  h += '<div class="sd-h">Hypothesis</div><div class="sd-text">' + (s.hypothesis ? esc(s.hypothesis) : '<span class="muted">not recorded</span>') + '</div>';
+  if (s.rationale) h += '<div class="sd-h">Rationale</div><div class="sd-text">' + esc(s.rationale) + '</div>';
+  var meta = ['id ' + s.sid];
+  if (s.source) meta.push('source ' + s.source);
+  if (s.proposer) meta.push('proposer ' + s.proposer);
+  if (s.parent) meta.push('refines ' + s.parent);
+  if (!isNil(s.cycle)) meta.push('proposed in cycle ' + str(s.cycle));
+  if (!s.declared) meta.push('no strategy event seen for this id');
+  h += '<div class="tiny" style="margin-top:6px">' + esc(meta.join(' \u00b7 ')) + '</div>';
+  if (s.prior) {
+    var pri = [];
+    if (fin(s.prior.p_record) !== null) pri.push(['P(record) per tranche', fmtPct(s.prior.p_record)]);
+    if (fin(s.prior.expected_best) !== null) pri.push(['expected best', fmtScore(s.prior.expected_best, p)]);
+    if (pri.length) h += '<div class="sd-h">Proposer\u2019s own forecast</div>' + kvList(pri);
+  }
+  h += '<div class="sd-h">Kernel and parameters</div><pre class="params">' + esc((s.kernel || '(no kernel)') + '\n' + prettyJson(s.params)) + '</pre>';
+  if (s.lastError) h += '<div class="sd-h">Last error</div><div class="sd-text neg">' + esc(s.lastError) + '</div>';
+  h += '</div><div>';
+  h += '<div class="sd-h">Price</div>';
+  if (s.price) {
+    var pr = s.price, items = [['dollars to record', fmtPrice(pr.usd)]];
+    var bt = bandText(pr);
+    if (bt) items.push(['band (optimistic to pessimistic)', bt]);
+    if (pr.model) items.push(['model', pr.model]);
+    if (pr.n !== null) items.push(['attempts used', fmtInt(pr.n)]);
+    if (pr.cpa !== null) items.push(['cost per attempt', fmtUsd(pr.cpa)]);
+    if (pr.p !== null) items.push(['P(one attempt hits the target)', fmtProb(pr.p)]);
+    if (pr.pLo !== null && pr.pHi !== null) items.push(['its 10th to 90th percentile', fmtProb(pr.pLo) + ' to ' + fmtProb(pr.pHi)]);
+    if (pr.xi !== null) items.push(['tail shape xi', fmtG(pr.xi)]);
+    if (pr.sigma !== null) items.push(['tail scale sigma', fmtG(pr.sigma)]);
+    if (s.priceHistory.length > 1) {
+      var hist = [];
+      for (var q = 0; q < s.priceHistory.length; q++) hist.push(fmtPrice(s.priceHistory[q]));
+      items.push(['price history', hist.join(' \u2192 ')]);
+    }
+    h += kvList(items);
+  } else {
+    h += '<div class="sd-text muted">No price yet: a pilot has to finish first.</div>';
+  }
+  if (s.lastAlloc) {
+    var la = s.lastAlloc.row;
+    var dec = la.chosen ? 'funded' + (la.workers !== null && la.seconds !== null ? ' (' + fmtInt(la.workers) + ' workers \u00d7 ' + fmtInt(la.seconds) + ' s)' : '') : 'not funded';
+    h += '<div class="sd-h">Latest allocation row' + (isNil(s.lastAlloc.cycle) ? '' : ' (cycle ' + esc(str(s.lastAlloc.cycle)) + ')') + '</div>' +
+      kvList([['price used', fmtPrice(la.usd)], ['P(record in tranche)', fmtPct(la.p)], ['sampled draw', fmtDraw(la.draw)], ['trust', fmtG(la.trust)], ['decision', dec]]);
+  }
+  h += '<div class="sd-h">Cards (forecast written before the run, outcome after)</div>';
+  if (s.cards.length === 0) {
+    h += '<div class="sd-text muted">No cards yet.</div>';
+  } else {
+    h += '<table class="mini"><thead><tr><th>card</th><th>stage</th><th>budget</th><th>forecast: new best / record</th><th>expected best</th><th>outcome</th><th>Brier</th></tr></thead><tbody>';
+    for (var i = 0; i < s.cards.length; i++) {
+      var c = st.cards[s.cards[i]];
+      if (!c) continue;
+      var f = c.forecast, r = c.result, rf = c.referee, outc;
+      if (!r) outc = c.state === 'running' ? 'running' : (c.state === 'lost' ? 'no result' : '\u2013');
+      else if (!isNil(r.error) && r.error !== '' && r.error !== false) outc = '<span class="neg">failed</span>';
+      else outc = esc(fmtScore(r.best, p)) + (bool(r.beat_record) ? ' <b class="pos">RECORD</b>' : (bool(r.new_best) ? ' <b class="pos">new best</b>' : ''));
+      var surpr = rf && ((fin(rf.surprise) !== null && fin(rf.surprise) > 2) || boolOrNull(rf.in_interval) === false);
+      h += '<tr><td class="mono">' + esc(c.cid) + '</td><td>' + esc(c.stage || '') + '</td><td class="mono">' + esc(fmtUsd(c.budget)) + '</td>' +
+        '<td class="mono">' + (f ? esc(str(f.source, '?') + ': ' + fmtPct(f.p_new_best) + ' / ' + fmtPct(f.p_record)) : '\u2013') + '</td>' +
+        '<td class="mono">' + (f && fin(f.best_q10) !== null && fin(f.best_q90) !== null ? esc('[' + fmtScore(f.best_q10, p) + ', ' + fmtScore(f.best_q90, p) + ']') : '\u2013') + '</td>' +
+        '<td class="mono">' + outc + '</td>' +
+        '<td class="mono">' + (rf ? esc(fmtBrier(rf.brier_new_best)) : '\u2013') + (surpr ? ' <span class="chip chip-warn">surprise</span>' : '') + '</td></tr>';
+    }
+    h += '</tbody></table>';
+  }
+  h += '</div></div>';
+  return h;
+}
+function strategyRow(st, s) {
+  var p = s.problem ? st.problems[s.problem] : null;
+  var open = !!ui.openStrategies[s.sid];
+  var h = '<tr class="srow' + (open ? ' open' : '') + (s.status === 'dropped' ? ' dim' : '') + '" data-act="toggle-strategy" data-arg="' + esc(s.sid) + '">';
+  h += '<td>' + (s.problem ? problemChip(st, s.problem) : '<span class="muted">\u2013</span>') + '</td>';
+  h += '<td class="mono"><span class="caret">' + (open ? '\u25be' : '\u25b8') + '</span> <b>' + esc(shortSid(s.sid)) + '</b>' +
+    (s.parent ? '<div class="tiny">from ' + esc(shortSid(s.parent)) + '</div>' : '') + '</td>';
+  h += '<td class="hyp" title="' + esc(s.hypothesis) + '"><div class="clamp2">' + (s.hypothesis ? esc(s.hypothesis) : '<span class="muted">not recorded</span>') + '</div></td>';
+  var ps = paramSummary(s.params, 80);
+  h += '<td class="kern" title="' + esc(clip(str(s.params, ''), 1500)) + '"><b class="mono">' + esc(s.kernel || '\u2013') + '</b>' +
+    (ps ? '<div class="tiny mono clamp1">' + esc(ps) + '</div>' : '') + '</td>';
+  h += '<td>' + esc(s.proposer || '\u2013') + (s.source && s.source !== s.proposer ? '<div class="tiny">' + esc(s.source) + '</div>' : '') + '</td>';
+  h += '<td class="num mono">' + esc(fmtCount(s.attempts)) + '</td>';
+  h += '<td class="num mono">' + esc(fmtUsd(s.spent)) + '</td>';
+  var pc = '<span class="muted" title="No pilot has finished yet">\u2013</span>';
+  if (s.price) {
+    pc = '<b' + (isFinite(s.price.usd) ? '' : ' class="neg"') + '>' + esc(fmtPrice(s.price.usd)) + '</b>';
+    var band = bandText(s.price);
+    if (band) pc += '<div class="tiny">' + esc(band) + '</div>';
+    if (s.prevPrice && s.prevPrice.usd !== s.price.usd) pc += '<div class="tiny">was ' + esc(fmtPrice(s.prevPrice.usd)) + '</div>';
+  }
+  h += '<td class="num mono">' + pc + '</td>';
+  var tc = '<span class="muted">\u2013</span>';
+  if (s.lastAlloc) {
+    tc = '<b>' + esc(fmtPct(s.lastAlloc.row.p)) + '</b><div class="tiny">' + (s.lastAlloc.row.chosen ? 'funded' : 'not funded') +
+      (isNil(s.lastAlloc.cycle) ? '' : ', cycle ' + esc(str(s.lastAlloc.cycle))) + '</div>';
+  }
+  h += '<td class="num mono">' + tc + '</td>';
+  var bc = '<span class="muted">\u2013</span>';
+  if (s.best !== null) {
+    bc = '<b>' + esc(fmtScore(s.best, p)) + '</b>';
+    if (p && p.record !== null) bc += '<div class="tiny">' + esc(fmtGap(s.best - p.record, p)) + ' vs record</div>';
+  }
+  h += '<td class="num mono">' + bc + '</td>';
+  var scls = s.status === 'funded' ? 'chip-info' : (s.status === 'failed' ? 'chip-bad' : (s.status === 'pilot' ? 'chip-neutral' : 'chip-muted'));
+  var sc = '<span class="chip ' + scls + '">' + esc(s.statusLabel) + '</span>';
+  var notes = [];
+  if (s.running > 0 && s.statusNote !== 'running') notes.push('running now');
+  if (s.statusNote) notes.push(s.statusNote);
+  if (s.status !== 'failed' && s.nErrors > 0) notes.push(s.nErrors + (s.nErrors === 1 ? ' failed card' : ' failed cards'));
+  if (notes.length) sc += '<div class="tiny">' + esc(notes.join(', ')) + '</div>';
+  h += '<td>' + sc + '</td></tr>';
+  if (open) h += '<tr class="sdetail"><td colspan="' + MARKET_COLS.length + '">' + strategyDetail(st, s, p) + '</td></tr>';
+  return h;
+}
+function renderMarket(st) {
+  var i, s;
+  if (ui.marketProblem !== 'all' && !st.problems[ui.marketProblem]) ui.marketProblem = 'all';
+  var fh = '';
+  if (st.problemOrder.length > 1) {
+    fh = '<span class="flabel">problem</span>' + chipBtn('market-problem', 'all', 'all', ui.marketProblem === 'all', null);
+    for (i = 0; i < st.problemOrder.length; i++) {
+      var slug = st.problemOrder[i];
+      fh += chipBtn('market-problem', slug, pPlain(st, slug), ui.marketProblem === slug, st.problems[slug].color);
+    }
+  }
+  setHtml('market-filters', fh);
+  if (st.strategyOrder.length === 0) {
+    setHtml('market', '<div class="empty">No strategies yet. Each proposed strategy appears here with its hypothesis; a price follows once its pilot has run.</div>');
+    return;
+  }
+  var rows = [];
+  for (i = 0; i < st.strategyOrder.length; i++) {
+    s = st.strategies[st.strategyOrder[i]];
+    if (ui.marketProblem !== 'all' && s.problem !== ui.marketProblem) continue;
+    rows.push(s);
+  }
+  var key = ui.sortKey, dir = ui.sortDir;
+  rows.sort(function (x, y) {
+    var a = sortVal(st, x, key), b = sortVal(st, y, key);
+    var an = isNil(a), bn = isNil(b), c;
+    if (an || bn) { if (an && bn) return x.idx - y.idx; return an ? 1 : -1; }   /* missing values always last */
+    if (typeof a === 'number' && typeof b === 'number') c = (a === b) ? 0 : (a < b ? -1 : 1);
+    else c = natCmp(String(a), String(b));
+    return c === 0 ? x.idx - y.idx : c * dir;
+  });
+  var h = '<table class="market"><thead><tr>';
+  for (i = 0; i < MARKET_COLS.length; i++) {
+    var col = MARKET_COLS[i], active = key === col.k;
+    h += '<th class="' + (col.num ? 'num' : '') + (active ? ' sorted' : '') + '" data-act="sort" data-arg="' + col.k + '" title="' +
+      esc(col.title || ('Sort by ' + col.label.toLowerCase())) + '">' + esc(col.label) + (active ? (dir > 0 ? ' \u25b2' : ' \u25bc') : '') + '</th>';
+  }
+  h += '</tr></thead><tbody>';
+  for (i = 0; i < rows.length; i++) h += strategyRow(st, rows[i]);
+  if (rows.length === 0) h += '<tr><td colspan="' + MARKET_COLS.length + '" class="empty">No strategies for this problem yet.</td></tr>';
+  h += '</tbody></table>';
+  setHtml('market', h);
+}
+
+/* ---------- decision log ---------- */
+function logEntryHtml(st, e) {
+  var open = !!ui.openLog[e.id];
+  var cls = 'le k-' + e.kind + (e.surprise ? ' surprise' : '') + (e.bad ? ' bad' : '') + (e.big ? ' big' : (e.good ? ' good' : '')) + (e.alert ? ' alert' : '');
+  var t = (e.ts !== null && !isNil(st.t0)) ? fmtClock(e.ts - st.t0) : '';
+  var h = '<div class="' + cls + '"><div class="le-head" data-act="toggle-log" data-arg="' + e.id + '">' +
+    '<span class="le-time mono" title="' + esc(fmtWall(e.ts)) + '">' + esc(t) + '</span>' +
+    '<span class="le-tag">' + esc(e.tag) + '</span>' +
+    '<span class="le-text">' + (e.problem ? problemChip(st, e.problem) + ' ' : '') + (e.surprise ? '<span class="chip chip-warn">SURPRISE</span> ' : '') + e.html + '</span></div>';
+  if (open) h += '<pre class="raw">' + esc(rawJson(e.events)) + '</pre>';
+  return h + '</div>';
+}
+function renderLog(st) {
+  var i, e, slug;
+  if (ui.logProblem !== 'all' && !st.problems[ui.logProblem]) ui.logProblem = 'all';
+  var counts = dict(), nSurprise = 0, shown = [], total = 0;
+  for (i = st.log.length - 1; i >= 0; i--) {
+    e = st.log[i];
+    if (ui.logProblem !== 'all') {
+      if (e.problem) { if (e.problem !== ui.logProblem) continue; }
+      else if (e.kind === 'system' || e.kind === 'llm') continue;
+    }
+    counts[e.kind] = (counts[e.kind] || 0) + 1;
+    if (e.surprise) nSurprise++;
+    if (!ui.logKinds[e.kind]) continue;
+    if (ui.surprisesOnly && !e.surprise) continue;
+    total++;
+    if (shown.length < ui.logLimit) shown.push(e);
+  }
+  var fh = '';
+  if (st.problemOrder.length > 1) {
+    fh += '<div class="frow"><span class="flabel">problem</span>' + chipBtn('log-problem', 'all', 'all', ui.logProblem === 'all', null);
+    for (i = 0; i < st.problemOrder.length; i++) {
+      slug = st.problemOrder[i];
+      fh += chipBtn('log-problem', slug, pPlain(st, slug), ui.logProblem === slug, st.problems[slug].color);
+    }
+    fh += '</div>';
+  }
+  fh += '<div class="frow"><span class="flabel">show</span>';
+  for (i = 0; i < KINDS.length; i++) {
+    var kd = KINDS[i], n = counts[kd.k] || 0;
+    if (kd.k === 'other' && n === 0) continue;
+    fh += chipBtn('log-kind', kd.k, kd.label + ' ' + n, !!ui.logKinds[kd.k], null);
+  }
+  fh += chipBtn('log-surprise', '1', 'surprises only (' + nSurprise + ')', ui.surprisesOnly, null) + '</div>';
+  setHtml('log-filters', fh);
+  var h = '';
+  if (st.log.length === 0) h = '<div class="empty">No decisions yet. Every ledger event will appear here as a sentence.</div>';
+  else if (shown.length === 0) h = '<div class="empty">Nothing matches these filters.</div>';
+  else {
+    for (i = 0; i < shown.length; i++) h += logEntryHtml(st, shown[i]);
+    if (total > shown.length) {
+      h += '<div class="more"><button type="button" data-act="log-more">Show ' + Math.min(LOG_PAGE, total - shown.length) + ' more</button> ' +
+        '<span class="tiny">showing the newest ' + fmtInt(shown.length) + ' of ' + fmtInt(total) + ' entries</span></div>';
+    }
+  }
+  setHtml('log', h, true);
+}
+
+/* ---------- calibration ---------- */
+function calibSvg(g, color) {
+  var W = 220, H = 206, L = 40, R = 10, T = 8, B = 34;
+  var pw = W - L - R, ph = H - T - B, i;
+  function sq(p) { return Math.sqrt(Math.min(1, Math.max(0, p))); }
+  function sx(p) { return L + sq(p) * pw; }
+  function sy(p) { return T + (1 - sq(p)) * ph; }
+  var ticks = [0, 0.02, 0.1, 0.25, 0.5, 1], labels = ['0', '2%', '10%', '25%', '50%', '100%'];
+  var s = '<svg class="calib-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Reliability chart for ' + esc(g.name) + ' forecasts">';
+  s += '<rect x="' + L + '" y="' + T + '" width="' + pw + '" height="' + ph + '" fill="#ffffff" stroke="#94a3b8"/>';
+  for (i = 0; i < ticks.length; i++) {
+    var x = r1(sx(ticks[i])), y = r1(sy(ticks[i]));
+    if (i > 0 && i < ticks.length - 1) {
+      s += '<line x1="' + x + '" x2="' + x + '" y1="' + T + '" y2="' + (T + ph) + '" stroke="#e8ebf0"/>';
+      s += '<line x1="' + L + '" x2="' + (L + pw) + '" y1="' + y + '" y2="' + y + '" stroke="#e8ebf0"/>';
+    }
+    s += '<text x="' + x + '" y="' + (T + ph + 12) + '" text-anchor="middle" class="axis">' + labels[i] + '</text>';
+    s += '<text x="' + (L - 4) + '" y="' + r1(y + 3.5) + '" text-anchor="end" class="axis">' + labels[i] + '</text>';
+  }
+  s += '<line x1="' + r1(sx(0)) + '" y1="' + r1(sy(0)) + '" x2="' + r1(sx(1)) + '" y2="' + r1(sy(1)) + '" stroke="#64748b" stroke-dasharray="4 3"/>';
+  for (i = 0; i < g.bins.length; i++) {
+    var b = g.bins[i];
+    if (b.n === 0) continue;
+    var mean = b.sumP / b.n, obs = b.hits / b.n, ci = wilson(b.hits, b.n, 1.2816);
+    var cx = r1(sx(mean)), cy = r1(sy(obs)), rad = r1(Math.min(9, 3 + Math.sqrt(b.n)));
+    s += '<line x1="' + cx + '" x2="' + cx + '" y1="' + r1(sy(ci[0])) + '" y2="' + r1(sy(ci[1])) + '" stroke="' + color + '" stroke-width="1.5" opacity="0.55"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + rad + '" fill="' + color + '" fill-opacity="0.85" stroke="#ffffff" stroke-width="1"><title>' +
+      esc(b.n + (b.n === 1 ? ' forecast' : ' forecasts') + ' between ' + fmtPct(b.lo) + ' and ' + fmtPct(b.hi) + ': mean forecast ' + fmtPct(mean) + ', new best in ' + b.hits + ' of ' + b.n + ' (' + fmtPct(obs) + ')') +
+      '</title></circle>';
+    var right = cx + rad + 14 < L + pw;
+    s += '<text x="' + r1(right ? cx + rad + 2 : cx - rad - 2) + '" y="' + r1(cy + 3.5) + '" text-anchor="' + (right ? 'start' : 'end') + '" class="axis rec">' + b.n + '</text>';
+  }
+  s += '<text x="' + (L + pw / 2) + '" y="' + (H - 4) + '" text-anchor="middle" class="axis">forecast P(new best)</text>';
+  s += '<text transform="translate(9 ' + (T + ph / 2) + ') rotate(-90)" text-anchor="middle" class="axis">observed</text>';
+  return s + '</svg>';
+}
+function statRow(g, label, color, cls) {
+  var rate = g.nScored > 0 ? g.hits / g.nScored : null;
+  return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + (color ? '<span class="swatch" style="background:' + color + '"></span> ' : '') + esc(label) + '</td>' +
+    '<td class="mono">' + g.n + '</td>' +
+    '<td class="mono">' + (g.nBrier > 0 ? esc(fmtBrier(g.sumBrier / g.nBrier)) : '\u2013') + '</td>' +
+    '<td class="mono">' + (rate !== null ? esc(fmtBrier(rate * (1 - rate))) : '\u2013') + '</td>' +
+    '<td class="mono">' + (g.nInt > 0 ? esc(fmtPct(g.inInt / g.nInt)) + ' <small>' + g.inInt + '/' + g.nInt + '</small>' : '\u2013') + '</td></tr>';
+}
+function renderCalib(st) {
+  var cal = calibration(st.forecasts), i, g, color;
+  if (cal.all.n === 0) {
+    setHtml('calib', '<div class="empty">No forecasts scored yet. Every card carries a forecast; the chart fills in when the referee has scored the first results.</div>');
+    return;
+  }
+  var h = '<div class="calib-charts">';
+  for (i = 0; i < cal.order.length; i++) {
+    g = cal.groups[cal.order[i]];
+    color = has(SOURCE_COLORS, g.name) ? SOURCE_COLORS[g.name] : '#475569';
+    h += '<div class="cc"><div class="cc-title"><span class="swatch" style="background:' + color + '"></span>' + esc(g.name) +
+      ' <span class="tiny">' + g.nScored + (g.nScored === 1 ? ' forecast' : ' forecasts') + '</span></div>' + calibSvg(g, color) + '</div>';
+  }
+  h += '</div>';
+  h += '<div class="tiny">One dot per bin of P(new best) forecasts: across = mean forecast, up = how often a new best really happened. The number is the count of forecasts in the bin, ' +
+    'the bar an 80% interval. Dots on the dashed diagonal mean calibrated. Axes are square-root scaled so that small probabilities stay visible.</div>';
+  h += '<table class="stats"><thead><tr><th>source</th><th>forecasts</th><th title="Mean squared error of the P(new best) forecast; 0 is perfect">mean Brier</th>' +
+    '<th title="Brier score of always forecasting the observed base rate; a useful forecast scores lower than this">base-rate Brier</th>' +
+    '<th title="Share of results that landed inside the forecast interval; about 80% if calibrated">inside [q10, q90]</th></tr></thead><tbody>';
+  for (i = 0; i < cal.order.length; i++) {
+    g = cal.groups[cal.order[i]];
+    h += statRow(g, g.name, has(SOURCE_COLORS, g.name) ? SOURCE_COLORS[g.name] : '#475569', '');
+  }
+  h += statRow(cal.all, 'all sources', null, 'total');
+  h += '</tbody></table>';
+  var a = cal.all, lines = [];
+  lines.push('Interval target: about 80% of results inside [q10, q90].');
+  if (a.nScored > 0) lines.push('New bests: forecasts added up to ' + trimZeros(a.sumP.toFixed(1)) + ', observed ' + a.hits + '.');
+  if (a.nRec > 0) lines.push('Records: forecasts added up to ' + trimZeros(a.sumPRec.toFixed(2)) + ', observed ' + a.recHits + '.');
+  lines.push('Surprises flagged: ' + a.surprises + ' of ' + a.n + '.');
+  if (a.n < 10) lines.push('Fewer than 10 forecasts so far: too few to judge calibration.');
+  h += '<div class="tiny">' + esc(lines.join(' ')) + '</div>';
+  setHtml('calib', h);
+}
+
+/* ---------- spend ---------- */
+function stageColor(stage) { return stage === 'pilot' ? '#93c5fd' : (stage === 'scale' ? '#1d4ed8' : '#94a3b8'); }
+function barRow(label, segs, max, total) {
+  var h = '<div class="bar-row"><div class="bar-label" title="' + esc(label) + '">' + esc(label) + '</div><div class="bar-track">';
+  for (var i = 0; i < segs.length; i++) {
+    var w = max > 0 ? Math.max(0, Math.min(100, 100 * segs[i].v / max)) : 0;
+    if (w > 0) h += '<div class="bar-seg" style="width:' + w.toFixed(2) + '%;background:' + segs[i].color + '" title="' + esc(segs[i].title) + '"></div>';
+  }
+  return h + '</div><div class="bar-val mono">' + esc(fmtUsd(total)) + '</div></div>';
+}
+function simpleBars(map, color) {
+  var keys = [], k, i, max = 0, h = '';
+  for (k in map) { keys.push(k); if (map[k] > max) max = map[k]; }
+  keys.sort(function (a, b) { return map[b] - map[a]; });
+  for (i = 0; i < keys.length; i++) h += barRow(keys[i], [{v: map[keys[i]], color: color, title: keys[i] + ': ' + fmtUsd(map[keys[i]])}], max, map[keys[i]]);
+  return h;
+}
+function renderSpend(st) {
+  var sp = st.spend, k, i, stg;
+  if (!(sp.compute > 0) && !(sp.llm > 0)) {
+    setHtml('spend', '<div class="empty">Nothing spent yet.</div>');
+    return;
+  }
+  var stages = [], seenStage = dict();
+  var pref = ['pilot', 'scale'];
+  for (i = 0; i < pref.length; i++) { if (has(sp.byStage, pref[i])) { stages.push(pref[i]); seenStage[pref[i]] = true; } }
+  for (k in sp.byStage) { if (!seenStage[k]) { stages.push(k); seenStage[k] = true; } }
+  var h = '';
+  if (sp.compute > 0) {
+    var legend = '';
+    for (i = 0; i < stages.length; i++) legend += '<span><span class="swatch" style="background:' + stageColor(stages[i]) + '"></span>' + esc(stages[i]) + '</span>';
+    h += '<div class="sp-h">Compute by problem <span class="legend">' + legend + '</span></div>';
+    var keys = [], totals = dict(), max = 0, tot;
+    for (i = 0; i < st.problemOrder.length; i++) { if (sp.byProblem[st.problemOrder[i]]) keys.push(st.problemOrder[i]); }
+    for (k in sp.byProblem) { if (keys.indexOf(k) < 0) keys.push(k); }
+    for (i = 0; i < keys.length; i++) {
+      tot = 0;
+      for (stg in sp.byProblem[keys[i]]) tot += sp.byProblem[keys[i]][stg];
+      totals[keys[i]] = tot;
+      if (tot > max) max = tot;
+    }
+    for (i = 0; i < keys.length; i++) {
+      var segs = [];
+      for (var j = 0; j < stages.length; j++) {
+        var v = sp.byProblem[keys[i]][stages[j]] || 0;
+        segs.push({v: v, color: stageColor(stages[j]), title: stages[j] + ': ' + fmtUsd(v)});
+      }
+      h += barRow(pPlain(st, keys[i]), segs, max, totals[keys[i]]);
+    }
+    h += '<div class="sp-h">Compute by stage</div>';
+    var smax = 0;
+    for (i = 0; i < stages.length; i++) { if (sp.byStage[stages[i]] > smax) smax = sp.byStage[stages[i]]; }
+    for (i = 0; i < stages.length; i++) {
+      h += barRow(stages[i], [{v: sp.byStage[stages[i]], color: stageColor(stages[i]), title: stages[i] + ': ' + fmtUsd(sp.byStage[stages[i]])}], smax, sp.byStage[stages[i]]);
+    }
+  }
+  if (sp.llmCalls > 0) {
+    h += '<div class="sp-h">LLM by purpose</div>' + simpleBars(sp.llmByPurpose, '#7e22ce');
+    h += '<div class="sp-h">LLM by model</div>' + simpleBars(sp.llmByModel, '#a855f7');
+  }
+  var foot = 'Total ' + fmtUsd(sp.compute + sp.llm) + ': compute ' + fmtUsd(sp.compute) + ', LLM ' + fmtUsd(sp.llm) +
+    (sp.llmCalls > 0 ? ' over ' + fmtInt(sp.llmCalls) + (sp.llmCalls === 1 ? ' call' : ' calls') + ' (' + fmtCount(sp.tokensIn) + ' tokens in, ' + fmtCount(sp.tokensOut) + ' out)' : '') + '.';
+  h += '<div class="tiny" style="margin-top:8px">' + esc(foot) + '</div>';
+  setHtml('spend', h);
+}
+
+/* ---------- orchestration ---------- */
+function safe(name, fn) {
+  try { fn(); delete app.renderErrors[name]; }
+  catch (e) {
+    app.renderErrors[name] = String(e && e.message ? e.message : e);
+    if (window.console && console.error) console.error('[ante dashboard] could not render ' + name, e);
+  }
+}
+function renderPanel(name) {
+  var st = app.state;
+  switch (name) {
+    case 'header': safe(name, function () { renderHeader(st); }); break;
+    case 'problems': safe(name, function () { renderProblems(st); }); break;
+    case 'market': safe(name, function () { renderMarket(st); }); break;
+    case 'log': safe(name, function () { renderLog(st); }); break;
+    case 'calibration': safe(name, function () { renderCalib(st); }); break;
+    case 'spend': safe(name, function () { renderSpend(st); }); break;
+    case 'banner': safe(name, function () { renderBanner(st); }); break;
+  }
+}
+function renderAll() {
+  var names = ['header', 'problems', 'market', 'log', 'calibration', 'spend', 'banner'];
+  for (var i = 0; i < names.length; i++) renderPanel(names[i]);
+  updateLive();
+}
+function updateLive() {
+  var dot = $('live-dot'), txt = $('live-text'), btn = $('btn-pause'), box = $('livebox');
+  if (!dot || !txt) return;
+  var now = Date.now();
+  var ago = app.lastOk ? fmtAgo(now - app.lastOk) : null;
+  var cls = 'dot', t;
+  if (app.localFile) { cls += ' local'; t = 'local file, not live'; }
+  else if (ui.paused) { cls += ' paused'; t = 'paused' + (ago ? ' \u00b7 last updated ' + ago + ' ago' : ''); }
+  else if (app.status === 'ok') { cls += ' live'; t = (app.state.run.ended ? 'run ended' : 'live') + ' \u00b7 last updated ' + ago + ' ago'; }
+  else if (app.status === 'init') { cls += ' wait'; t = 'connecting'; }
+  else { cls += ' wait'; t = (app.state.nEvents > 0 ? 'connection lost' : 'waiting for ledger') + (ago ? ' \u00b7 last updated ' + ago + ' ago' : ''); }
+  if (dot.className !== cls) dot.className = cls;
+  if (txt.textContent !== t) txt.textContent = t;
+  if (box) {
+    var tip = 'Re-reading ' + LEDGER_URL + ' every ' + (POLL_MS / 1000) + ' s.' + (app.lastChange ? ' The ledger last changed ' + fmtAgo(now - app.lastChange) + ' ago.' : '');
+    if (box.title !== tip) box.title = tip;
+  }
+  if (btn) {
+    var bl = ui.paused ? 'Resume' : 'Pause';
+    if (btn.textContent !== bl) btn.textContent = bl;
+    btn.disabled = !!app.localFile;
+  }
+  var el = $('h-elapsed');
+  if (el) {
+    var es = fmtDur(elapsedSeconds(app.state));
+    if (el.textContent !== es) el.textContent = es;
+  }
+}
+function ingest(text) {
+  try {
+    app.text = text;
+    app.parse = parseLedger(text);
+    app.state = replay(app.parse.events);
+    app.hasLoaded = true;
+    app.lastChange = Date.now();
+    window.__state = app.state;
+    delete app.renderErrors.replay;
+  } catch (e) {
+    app.renderErrors.replay = String(e && e.message ? e.message : e);
+  }
+  renderAll();
+}
+function onFetchFail(err) {
+  app.status = 'error';
+  app.error = String(err && err.message ? err.message : err);
+  if (app.hasLoaded) renderPanel('banner'); else renderAll();
+}
+function poll(force) {
+  if (app.inflight || app.localFile) return;
+  if (ui.paused && !force) return;
+  app.inflight = true;
+  var req;
+  try { req = window.fetch(LEDGER_URL, {cache: 'no-store'}); }
+  catch (e) { app.inflight = false; onFetchFail(e); updateLive(); return; }
+  req.then(function (res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.text();
+  }).then(function (text) {
+    app.inflight = false;
+    if (app.localFile) return;
+    app.status = 'ok';
+    app.error = '';
+    app.lastOk = Date.now();
+    if (!app.hasLoaded || text !== app.text) ingest(text);
+    else { renderPanel('banner'); updateLive(); }
+  }).catch(function (err) {
+    app.inflight = false;
+    onFetchFail(err);
+    updateLive();
+  });
+}
+function toggle(map, key) { if (map[key]) delete map[key]; else map[key] = true; }
+function hasSelection() {
+  try { var sel = window.getSelection(); return !!sel && String(sel).length > 0; } catch (e) { return false; }
+}
+
+document.addEventListener('click', function (ev) {
+  var t = ev.target;
+  if (!t || typeof t.closest !== 'function') return;
+  var el = t.closest('[data-act]');
+  if (!el) return;
+  var act = el.getAttribute('data-act'), arg = el.getAttribute('data-arg');
+  switch (act) {
+    case 'pause':
+      ui.paused = !ui.paused;
+      updateLive();
+      if (!ui.paused) poll(true);
+      break;
+    case 'sort':
+      if (ui.sortKey === arg) ui.sortDir = -ui.sortDir;
+      else { ui.sortKey = arg; ui.sortDir = has(DESC_FIRST, arg) ? -1 : 1; }
+      renderPanel('market');
+      break;
+    case 'market-problem': ui.marketProblem = arg; renderPanel('market'); break;
+    case 'toggle-strategy':
+      if (hasSelection()) break;
+      toggle(ui.openStrategies, arg);
+      renderPanel('market');
+      break;
+    case 'focus-problem':
+      if (ui.marketProblem === arg && ui.logProblem === arg) { ui.marketProblem = 'all'; ui.logProblem = 'all'; }
+      else { ui.marketProblem = arg; ui.logProblem = arg; }
+      ui.logLimit = LOG_PAGE;
+      renderPanel('market');
+      renderPanel('log');
+      break;
+    case 'log-problem': ui.logProblem = arg; ui.logLimit = LOG_PAGE; renderPanel('log'); break;
+    case 'log-kind':
+      if (has(ui.logKinds, arg)) ui.logKinds[arg] = !ui.logKinds[arg];
+      ui.logLimit = LOG_PAGE;
+      renderPanel('log');
+      break;
+    case 'log-surprise': ui.surprisesOnly = !ui.surprisesOnly; ui.logLimit = LOG_PAGE; renderPanel('log'); break;
+    case 'log-more': ui.logLimit += LOG_PAGE; renderPanel('log'); break;
+    case 'toggle-log':
+      if (hasSelection()) break;
+      toggle(ui.openLog, arg);
+      renderPanel('log');
+      break;
+  }
+});
+document.addEventListener('change', function (ev) {
+  var t = ev.target;
+  if (!t || t.id !== 'file-in' || !t.files || !t.files.length) return;
+  var file = t.files[0];
+  var reader = new FileReader();
+  reader.onload = function () {
+    app.localFile = file.name;
+    app.status = 'local';
+    app.error = '';
+    ingest(typeof reader.result === 'string' ? reader.result : '');
+  };
+  reader.readAsText(file);
+});
+document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(false); });
+
+window.__state = app.state;
+window.__ante = {replay: replay, parseLedger: parseLedger, calibration: calibration, ui: ui, app: app};
+renderAll();
+poll(true);
+window.setInterval(function () { poll(false); }, POLL_MS);
+window.setInterval(updateLive, 1000);
+})();
+</script>
+</body>
+</html>

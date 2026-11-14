@@ -109,7 +109,7 @@ class Loop:
             target = p.target(record)
             st = self.market.problems.get(slug)
             if st is None:
-                st = self.market.problems[slug] = ProblemState(slug, p.maximize, record, target)
+                st = self.market.problems[slug] = ProblemState(slug, p.maximize, record, target, integer=p.integer_scores)
             elif record != st.record:
                 self.ledger.append("note", text=f"The {slug} record moved from {st.record!r} to {record!r} (now held by {rows[0]['agentName']}).")
             st.record, st.target = record, target
@@ -170,6 +170,9 @@ class Loop:
         scores = [x for r in results for x in r["scores"]]
         errors = [r.get("error") for r in results if not r.get("ok")]
         s.batches.append(scores)
+        for r in results:
+            if r.get("start_score") is not None and (s.start_score is None or st.better(r["start_score"], s.start_score)):
+                s.start_score = float(r["start_score"])
         s.cost_usd += cost
         s.core_seconds += core_s
         s.cards += 1
@@ -203,7 +206,7 @@ class Loop:
                 path = self.dir / "candidates" / f"{s.problem}-{sha}.json"
                 path.write_text(json.dumps({"problem": s.problem, "score": score, "sid": s.sid, "cid": card["cid"], "seed": r.get("seed"), "solution": r["best_solution"]}))
                 self.ledger.append("candidate", problem=s.problem, score=score, cid=card["cid"], sid=s.sid, solution_sha=sha, path=str(path.relative_to(self.dir)),
-                                   lineage="from scratch" if s.params.get("start") in ("random", "scratch") else "derived from public or earlier solutions")
+                                   lineage=p.lineage(s.kernel, s.params))
                 if st.beats_record(score):
                     beat_record = True
                     v = verify.gauntlet(p, r["best_solution"], self.ledger, sha, sandbox=self.cfg.sandbox_verify)
@@ -227,7 +230,9 @@ class Loop:
         self.ledger.append("referee", cid=card["cid"], sid=s.sid, forecast=card["forecast"], outcome=outcome, **verdict)
         f = card["forecast"]
         if f.get("p_new_best") is not None:
-            self.market.calibration.update(f["source"], f["p_new_best"], new_best)
+            self.market.calibration.update(f["source"], "new_best", f["p_new_best"], new_best)
+        if f.get("p_record") is not None:
+            self.market.calibration.update(f["source"], "record", f["p_record"], beat_record)
         self.pending_reflection.setdefault(s.problem, []).append(
             {"cid": card["cid"], "sid": s.sid, "stage": card["stage"], "cost_usd": cost, "forecast": f, "outcome": outcome, "surprise": verdict["surprise"]})
 
@@ -268,7 +273,7 @@ class Loop:
             if tranche > 0.2 * cfg.tranche_usd:
                 table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd)
                 names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
-                self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table,
+                self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(),
                                    note=f"Funded {names}: highest sampled chance of a record (plus {int(100 * 0.05)}% weight on improving our own best) per equal share of the tranche.")
                 self._run_cards([(s, "scale", usd) for s, usd in chosen])
 

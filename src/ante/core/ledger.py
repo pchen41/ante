@@ -7,6 +7,7 @@ tables are all derived by replaying this file; nothing else is a source of truth
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -21,9 +22,9 @@ class Ledger:
         self._on_write = on_write
 
     def append(self, type: str, **data: Any) -> dict:
-        event = {"seq": self._seq, "ts": round(time.time(), 3), "type": type, **data}
+        event = _strict({"seq": self._seq, "ts": round(time.time(), 3), "type": type, **data})
         with open(self.path, "a") as f:
-            f.write(json.dumps(event, default=_jsonable) + "\n")
+            f.write(json.dumps(event, default=_jsonable, allow_nan=False) + "\n")
         self._seq += 1
         if self._on_write:
             self._on_write()
@@ -40,6 +41,21 @@ class Ledger:
                 event = json.loads(line)
                 if type is None or event["type"] == type:
                     yield event
+
+
+def _strict(obj: Any) -> Any:
+    """Strict JSON only: non-finite floats become null (an unreachable price is `null`, not Infinity)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {str(k): _strict(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_strict(v) for v in obj]
+    if hasattr(obj, "item") and not hasattr(obj, "__len__"):  # numpy scalar
+        return _strict(obj.item())
+    if hasattr(obj, "tolist"):
+        return _strict(obj.tolist())
+    return obj
 
 
 def _jsonable(obj: Any) -> Any:
