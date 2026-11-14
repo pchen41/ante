@@ -65,10 +65,11 @@ class ModalRunner:
     def run(self, jobs: list[dict]) -> list[dict]:
         chunks = [jobs[i : i + self.cores_per_container] for i in range(0, len(jobs), self.cores_per_container)]
         out: list[dict] = []
-        for res in self.fn.map(chunks, order_outputs=True, return_exceptions=True):
+        for chunk, res in zip(chunks, self.fn.map(chunks, order_outputs=True, return_exceptions=True)):
             if isinstance(res, Exception):
-                out.append({"ok": False, "error": f"container failed: {type(res).__name__}: {res}"[:300], "scores": [], "best_score": None,
-                            "best_solution": None, "seconds": 0.0, "meta": {}, "seed": None})
+                # one error per job the container held, so that results stay aligned with containers for costing
+                out.extend({"ok": False, "error": f"container failed: {type(res).__name__}: {res}"[:300], "scores": [], "best_score": None,
+                            "best_solution": None, "seconds": float(job["seconds"]), "meta": {}, "seed": job["seed"]} for job in chunk)
             else:
                 out.extend(res)
         return out

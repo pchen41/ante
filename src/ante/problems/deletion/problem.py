@@ -37,6 +37,8 @@ class DeletionCode(Problem):
                     Knob("ruin_max", "int", 16, 2, 120, doc="largest ruin size"),
                     Knob("ruin_mode", "choice", "neighbourhood", choices=["neighbourhood", "band"], doc="ruin a cluster around a random word, or a whole weight band"),
                     Knob("stall", "int", 50_000, 0, 5_000_000, doc="idle iterations before returning to the chain's best (0 = never)"),
+                    Knob("greedy_k", "int", 1, 1, 8, doc="refill after an ordinary move: best of this many sampled free words (fewest new blocks)"),
+                    Knob("ruin_greedy_k", "int", 2, 1, 16, doc="refill after a ruin: best of this many sampled free words"),
                 ],
             ),
             "window": KernelSpec(
@@ -46,7 +48,12 @@ class DeletionCode(Problem):
                 "outcome is the code size after the window (never smaller than the start).",
                 [
                     Knob("start", "choice", "record", choices=["record", "public", "elite"], doc="code to improve"),
-                    Knob("geometry", "choice", "cluster", choices=["cluster", "band"], doc="cluster: release the codewords nearest a random centre; band: release every codeword whose Hamming weight lies in a random run of `band_width` consecutive weights (conflicts only join weights at most 2 apart)"),
+                    Knob("geometry", "choice", "cluster", choices=["cluster", "band", "difference", "splice"], doc=(
+                        "cluster: release the codewords nearest a random centre. band: release every codeword whose Hamming weight lies in a random run of "
+                        "`band_width` consecutive weights. difference: pick a second good code (a random public top-5 code or one of ours, random symmetry "
+                        "image), keep only the words both codes share, and re-solve everything else exactly, with every compatible word of the whole space "
+                        "as a candidate (searches between two basins). splice: keep our code's words of weight <= k and the second code's words of weight "
+                        ">= k+3 for a random k, and re-solve the two middle weight layers exactly (the two kept parts can never conflict)")),
                     Knob("band_width", "int", 2, 1, 5, doc="geometry=band: number of consecutive weights released"),
                     Knob("size", "int", 16, 4, 120, doc="geometry=cluster: codewords released per window"),
                     Knob("pool_factor", "float", 1.5, 1.0, 4.0, doc="the window is sampled from the pool_factor*size codewords closest to a random centre (1.0 = the closest ones exactly)"),
@@ -65,12 +72,27 @@ class DeletionCode(Problem):
         if start == "scratch":
             return None
         if start == "record":
-            return words_to_ints(self.public_solutions()[0]["data"]["words"])
+            return symmetry_images(words_to_ints(self.public_solutions()[0]["data"]["words"]))[int(rng.integers(4))]
         if start == "public":
             pub = self.public_solutions()
             code = words_to_ints(pub[int(rng.integers(len(pub)))]["data"]["words"])
             return symmetry_images(code)[int(rng.integers(4))]
-        return words_to_ints(elites[min(int(rng.exponential(1.5)), len(elites) - 1)]["words"])
+        # our own codes: uniformly among those within one word of our best, so that a plateau of equal-size codes is explored broadly
+        top = len(elites[0]["words"])
+        pool = [e for e in elites if len(e["words"]) >= top - 1]
+        return words_to_ints(pool[int(rng.integers(len(pool)))]["words"])
+
+    def _donor(self, rng, elites, code):
+        """A second good code, different from `code`: a public top-5 code or one of ours, in a random symmetry image."""
+        from .graph import symmetry_images, words_to_ints
+
+        pool = [s["data"]["words"] for s in self.public_solutions()] + [e["words"] for e in (elites or [])]
+        mine = set(np.asarray(code).tolist())
+        for _ in range(20):
+            img = symmetry_images(words_to_ints(pool[int(rng.integers(len(pool)))]))[int(rng.integers(4))]
+            if len(mine & set(np.asarray(img).tolist())) < len(mine):
+                return np.asarray(img, dtype=np.int64)
+        return None
 
     def run(self, kernel_name: str, params: dict, seed: int, seconds: float, elites: list[dict] | None = None) -> AttemptBatch:
         from . import search as S
@@ -84,12 +106,13 @@ class DeletionCode(Problem):
         scores: list[float] = []
         best = None
         start_score = None
-        started = improved = 0
+        started = improved = top_started = top_improved = 0
+        top_bar = sorted((float(x["score"]) for x in self.public_solutions()), reverse=True)[2]  # third-best public size
         ladder: dict[str, list[int]] = {}
         meta: dict = {"params": p}
         if kernel_name == "ils":
             p["ruin_max"] = max(p["ruin_max"], p["ruin_min"])
-            kw = {k: p[k] for k in ("tmax", "kappa", "accept", "max_drop", "temp", "p_force", "p_ruin", "ruin_min", "ruin_max", "ruin_mode", "stall")}
+            kw = {k: p[k] for k in ("tmax", "kappa", "accept", "max_drop", "temp", "p_force", "p_ruin", "ruin_min", "ruin_max", "ruin_mode", "stall", "greedy_k", "ruin_greedy_k")}
             iters = 0
             while True:
                 left = seconds - (time.time() - t0)
@@ -109,6 +132,9 @@ class DeletionCode(Problem):
                     rung = ladder.setdefault(str(len(x0)), [0, 0])
                     rung[0] += 1
                     rung[1] += int(r["best"] > len(x0))
+                    if len(x0) >= top_bar:
+                        top_started += 1
+                        top_improved += int(r["best"] > len(x0))
                 if best is None or r["best"] > len(best):
                     best = s.best_ints()
             meta["iterations"] = iters
@@ -120,15 +146,23 @@ class DeletionCode(Problem):
                 left = seconds - (time.time() - t0)
                 if left < 3.0:
                     break
-                if p["geometry"] == "band":
-                    lo = int(rng.integers(0, 17 - p["band_width"] + 1))
-                    rel = W.band_window(t, code, lo, lo + p["band_width"] - 1)
-                    if rel.shape[0] == 0:
-                        continue
+                tl = min(p["time_limit"], left - 1.0)
+                if p["geometry"] in ("difference", "splice"):
+                    donor = self._donor(rng, elites, code)
+                    if donor is None:
+                        break
+                    fixed = W.difference_fixed(code, donor) if p["geometry"] == "difference" else W.splice_fixed(t, code, donor, int(rng.integers(2, 12)))
+                    out = W.solve_fixed(t, fixed, len(code), time_limit=tl, max_candidates=p["max_candidates"])
                 else:
-                    centre = int(rng.choice(code)) if p["centre"] == "codeword" else int(rng.integers(t.n_words))
-                    rel = W.cluster_window(t, code, centre, p["size"], rng=rng, pool_factor=p["pool_factor"])
-                out = W.solve_window(t, code, rel, time_limit=min(p["time_limit"], left - 1.0), max_candidates=p["max_candidates"])
+                    if p["geometry"] == "band":
+                        lo = int(rng.integers(0, 17 - p["band_width"] + 1))
+                        rel = W.band_window(t, code, lo, lo + p["band_width"] - 1)
+                        if rel.shape[0] == 0:
+                            continue
+                    else:
+                        centre = int(rng.choice(code)) if p["centre"] == "codeword" else int(rng.integers(t.n_words))
+                        rel = W.cluster_window(t, code, centre, p["size"], rng=rng, pool_factor=p["pool_factor"])
+                    out = W.solve_window(t, code, rel, time_limit=tl, max_candidates=p["max_candidates"])
                 skipped += out["status"] == "skipped"
                 timed_out += out["status"] == "limit"
                 if skipped > 200 and not scores:
@@ -137,8 +171,10 @@ class DeletionCode(Problem):
                     continue
                 proven += bool(out.get("proven_no_gain"))
                 started += 1
+                top_started += int(len(code) >= top_bar)
                 if out.get("gain", 0) > 0:
                     improved += 1
+                    top_improved += int(len(code) >= top_bar)
                     code = np.asarray(out["new_code"], dtype=np.int64)
                 scores.append(float(len(code)))
             best = code
@@ -146,6 +182,7 @@ class DeletionCode(Problem):
             meta["windows_skipped_too_large"] = int(skipped)
             meta["windows_hit_time_limit"] = int(timed_out)
         meta["started_from_known"], meta["improved_on_start"] = int(started), int(improved)
+        meta["top_started"], meta["top_improved"] = int(top_started), int(top_improved)
         if ladder:
             meta["ladder"] = ladder
         best_solution = best_score = None
@@ -182,5 +219,10 @@ class DeletionCode(Problem):
             "Conflicts only join words whose Hamming weights differ by at most 2. The public 226 code has no free word and no "
             "improving 1-for-2 or 2-for-3 exchange; other agents proved that around the older 223 codes no exchange of up to 7 "
             "words helps. The 225 code shares 188 words with the 226 code; the 224 code shares 138 after complementing; the 223 "
-            "is unrelated. From the empty code, one minute of iterated local search reaches 211."
+            "is unrelated. From the empty code, one minute of iterated local search reaches 211. Exact solves show the public 226 code "
+            "cannot be improved inside any single weight layer, any two adjacent layers, or tens of thousands of 40-word clusters, so a "
+            "227 needs a coordinated change of 30+ words, a temporary descent below 226, or a splice of two different codes. The last "
+            "leaderboard step is reproducible: ILS chains that start from the public 225 code with Metropolis acceptance (temp 1.0-1.5), "
+            "max_drop 8, tmax 5-8, weight-band ruins of 8-40 words and p_ruin 0.04-0.08 reached new 226-word codes in 3 of 8 chains of "
+            "40-60 s. Nothing has yet improved a 226 start. Chains of 300-900 s are untested."
         )

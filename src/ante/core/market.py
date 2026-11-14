@@ -14,9 +14,10 @@ import numpy as np
 from . import pricing
 
 LAMBDA_NEW_BEST = 0.002  # tie-breaker: "improves our own best" counts for 1/500 of "sets a record"
-DEFAULT_RATING = 0.005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $200
+DEFAULT_RATING = 0.0005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $2,000
 RATING_BOUNDS = (1.0 / 5000.0, 1.0 / 10.0)  # opening prices are kept between $10 and $5,000
-RECENT_CARDS = 3  # a strategy is priced on its most recent cards (its starting pool drifts as elites improve)
+RECENT_CARDS = 3  # tail fits use a strategy's most recent cards (its starting pool drifts as elites improve)
+W_CLIMB = 0.01  # allocator weight of climbing evidence: P(an attempt improves a top-3 known solution it started from)
 
 
 def solution_sha(solution: dict) -> str:
@@ -45,6 +46,10 @@ class Strategy:
     improved: int = 0  # ... and how many of them ended strictly better than it
     rating: float | None = None  # the PI's current P(record per $1); sets the opening price
     ladder: dict = field(default_factory=dict)  # start score -> [attempts started there, attempts that ended strictly better]
+    top_started: int = 0  # attempts that began from one of the three best known solutions ...
+    top_improved: int = 0  # ... and ended strictly better than it
+    record_hits: int = 0  # attempts, over the whole history, that reached the record target
+    empty_cards: int = 0  # cards that produced no attempt outcomes
     cards: int = 0
     funded: int = 0  # number of scale cards
     retired: bool = False
@@ -88,7 +93,7 @@ class ProblemState:
     def beats_record(self, score: float) -> bool:
         return score >= self.target if self.maximize else score <= self.target
 
-    def add_elite(self, score: float, key: str, solution: dict, keep: int = 8) -> None:
+    def add_elite(self, score: float, key: str, solution: dict, keep: int = 16) -> None:
         if any(k == key for _, k, _ in self.elites):
             return
         self.elites.append((score, key, solution))
@@ -168,7 +173,8 @@ class Market:
         seed = int(self.rng.integers(1 << 31))
         xi0 = self.xi_prior(s.problem)
         q_rec = pricing.quote(att, ps.maximize, ps.target, cpa, seed=seed, xi_prior=xi0, integer=ps.integer,
-                              prior_usd=s.opening_price(self.calibration.trust("prior", "record")))
+                              prior_usd=s.opening_price(self.calibration.trust("prior", "record")),
+                              n_total=s.n_attempts(), s_total=s.record_hits)
         if q_rec.fit is not None and q_rec.fit.n * q_rec.fit.q0 >= pricing.MIN_EXCEEDANCES_FOR_SHAPE:
             self.shapes.setdefault(s.problem, {})[s.sid] = q_rec.fit.xi
         # "new best" = better than our best so far AND better than what the strategy started from
@@ -207,24 +213,29 @@ class Market:
         return {
             "sid": s.sid, "problem": s.problem, "model": q.model, "n_attempts": s.n_attempts(), "cost_per_attempt": s.cost_per_attempt(),
             "opening_price_usd": s.opening_price(self.calibration.trust("prior", "record")), "started_from_known": s.started, "improved_on_start": s.improved,
+            "top_started": s.top_started, "top_improved": s.top_improved,
             "p_attempt": q.p_attempt, "p_lo": q.p_lo, "p_hi": q.p_hi, "usd_to_record": _finite(q.usd_to_target),
             "xi": fit.xi if fit else None, "sigma": fit.sigma if fit else None,
             "u": (fit.u if self.problems[s.problem].maximize else -fit.u) if fit else None,
         }
 
     # ---- allocation -------------------------------------------------------------------------
-    def allocate(self, tranche_usd: float, k: int, min_share_usd: float) -> tuple[list[dict], list[tuple[Strategy, float]]]:
+    def allocate(self, tranche_usd: float, k: int, min_share_usd: float, uniform: bool = False) -> tuple[list[dict], list[tuple[Strategy, float]]]:
         """Thompson sampling over priced strategies.
 
-        For each strategy draw one plausible value of P(attempt reaches the record) and of P(attempt
-        beats our best), turn them into P(event within an equal share of the tranche), and rank by
-        P(record) + LAMBDA * P(new best), scaled by how well that forecast source has been calibrated.
-        The top `k` are funded with equal shares.
+        For each strategy, draw one plausible value of
+          P(record within a nominal share of the tranche)                      [success counting, capped tail fit]
+        + W_CLIMB * P(an attempt improves a top-3 known solution it started from) [the strongest evidence short of a record]
+        + LAMBDA_NEW_BEST * P(new own best within the share)                    [tie-breaker]
+        each scaled by how well that forecast source has been calibrated. The top `k` draws are funded,
+        and the tranche is split in proportion to their draws (never less than `min_share_usd` each).
+        With `uniform=True` (the ablation arm) k live strategies are funded at random with equal shares.
         """
         cands = [s for s in self.live() if s.n_attempts() > 0]
         if not cands:
             return [], []
-        share = max(tranche_usd / max(min(k, len(cands)), 1), min_share_usd)
+        k = max(min(k, len(cands)), 1)
+        share = max(tranche_usd / k, min_share_usd)
         rows = []
         for s in cands:
             q_rec, q_best = self.quotes(s)
@@ -232,17 +243,23 @@ class Market:
             t_rec, t_best = self.calibration.trust(source, "record"), self.calibration.trust(source, "new_best")
             pr = np.minimum(q_rec.p_within_samples(share) * t_rec, 1.0)
             pb = np.minimum(q_best.p_within_samples(share) * t_best, 1.0)
-            draw = float(self.rng.choice(pr)) + LAMBDA_NEW_BEST * float(self.rng.choice(pb))
+            climb = float(self.rng.beta(0.5 + s.top_improved, 0.5 + s.top_started - s.top_improved)) if s.top_started else 0.0
+            draw = float(self.rng.choice(pr)) + W_CLIMB * climb + LAMBDA_NEW_BEST * float(self.rng.choice(pb))
+            if uniform:
+                draw = float(self.rng.random())
             rows.append({
                 "sid": s.sid, "problem": s.problem, "usd_to_record": _finite(q_rec.usd_to_target), "model": source,
                 "p_record_tranche": float(pr.mean()), "p_new_best_tranche": float(pb.mean()),
-                "draw": draw, "trust": t_rec, "trust_new_best": t_best, "chosen": False, "budget_usd": 0.0,
+                "climb": [s.top_improved, s.top_started], "draw": draw, "trust": t_rec, "trust_new_best": t_best, "chosen": False, "budget_usd": 0.0,
             })
         rows.sort(key=lambda r: -r["draw"])
+        top = rows[:k]
+        total = sum(r["draw"] for r in top)
         chosen = []
-        for r in rows[:k]:
-            r["chosen"], r["budget_usd"] = True, share
-            chosen.append((self.strategies[r["sid"]], share))
+        for r in top:
+            frac = (1.0 / len(top)) if (uniform or total <= 0) else r["draw"] / total
+            r["chosen"], r["budget_usd"] = True, max(tranche_usd * frac, min_share_usd)
+            chosen.append((self.strategies[r["sid"]], r["budget_usd"]))
         return rows, chosen
 
 

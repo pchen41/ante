@@ -154,6 +154,8 @@ def launch(
     wait: bool = False,
     carry_from: str = "",
     max_card_seconds: float = 1800.0,
+    allocator: str = "priced",
+    no_pi: bool = False,
 ):
     """Start a run in the cloud. Prints the estimated maximum spend first."""
     from ante.core.loop import SEEDS
@@ -163,7 +165,7 @@ def launch(
         compute_budget_usd=compute_usd, llm_budget_usd=llm_usd, max_cycles=cycles, max_wall_seconds=hours * 3600, pilot_usd=pilot_usd,
         pilot_seconds=pilot_seconds, tranche_usd=tranche_usd, fund_k=fund_k, scale_seconds=scale_seconds, proposals_per_problem=proposals,
         pi_model=pi_model, pi_effort=pi_effort, sandbox_verify=not no_sandbox, seed=seed,
-        carry_from=[r for r in carry_from.split(",") if r], max_card_seconds=max_card_seconds,
+        carry_from=[r for r in carry_from.split(",") if r], max_card_seconds=max_card_seconds, app_id=app.app_id or "", allocator=allocator, use_pi=not no_pi,
     )
     print(f"Launching {cfg['run_id']}: compute budget ${compute_usd:.2f}, LLM budget ${llm_usd:.2f}, wall limit {hours:.1f} h")
     if wait:

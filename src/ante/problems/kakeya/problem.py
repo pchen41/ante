@@ -8,7 +8,7 @@ from ante.core.problem import AttemptBatch, KernelSpec, Knob, Problem
 
 from . import exact
 
-MOVE_NAMES = ["block_shift", "scan_shift", "resize", "reflect", "transfer", "crossover", "kick"]
+MOVE_NAMES = ["block_shift", "scan_shift", "resize", "reflect", "transfer", "crossover", "kick", "group_crossover"]
 
 
 class KakeyaNeedle(Problem):
@@ -24,14 +24,14 @@ class KakeyaNeedle(Problem):
                 "local minimum (Newton, exact piecewise-quadratic area), accept by Metropolis. One attempt = one chain "
                 "of `chain_seconds`; its outcome is the best new local minimum the chain found.",
                 [
-                    Knob("start", "choice", "random", choices=["random", "public", "record", "elite"], doc="where each chain starts: a random arrangement, a random public top-5 solution (or its mirror image), the public record, or one of our own best arrangements"),
+                    Knob("start", "choice", "random", choices=["random", "layout", "public", "record", "elite"], doc="where each chain starts: random = structureless noise; layout = a freshly sampled group layout (about 16 small groups of 3-11 directions nested in 4-5 large groups, the structure all good solutions share; every start is a different layout); public = a random public top-5 solution or its mirror image; record = the public record; elite = one of our own best arrangements"),
                     Knob("chain_seconds", "float", 60.0, 5.0, 3600.0, doc="length of one chain (one attempt)"),
                     Knob("temperature", "float", 1e-6, 1e-9, 1e-3, doc="Metropolis temperature in area units; neighbouring minima are typically 1e-6 to 1e-4 apart"),
                     Knob("patience", "int", 50, 5, 5000, doc="hops without a new chain best before the chain returns to its best arrangement"),
                     Knob("polish_iters", "int", 150, 20, 400, doc="Newton iteration cap per hop"),
                     Knob("donors", "choice", "all", choices=["all", "own", "none"], doc="which arrangements the crossover move may splice blocks from: public top-5 plus our own best, only our own, or none"),
                 ]
-                + [Knob(f"w_{m}", "float", w, 0.0, 10.0, doc=f"relative frequency of the `{m}` move") for m, w in zip(MOVE_NAMES, [2.0, 1.0, 2.0, 1.0, 1.5, 1.5, 1.0])],
+                + [Knob(f"w_{m}", "float", w, 0.0, 10.0, doc=f"relative frequency of the `{m}` move") for m, w in zip(MOVE_NAMES, [2.0, 1.0, 2.0, 1.0, 1.5, 1.5, 1.0, 1.5])],
             )
         }
 
@@ -56,7 +56,8 @@ class KakeyaNeedle(Problem):
         best = None
         hops = 0
         start_score = None
-        started = improved = 0
+        started = improved = top_started = top_improved = 0
+        top_bar = sorted(public_areas)[2]  # area of the third-best public solution
         while True:
             left = seconds - (time.time() - t0)
             if left < 2.0 or (scores and left < 0.5 * p["chain_seconds"]):
@@ -66,29 +67,36 @@ class KakeyaNeedle(Problem):
                 start = "public"
             if start == "random":
                 x0 = S.random_start(rng)
+            elif start == "layout":
+                x0 = S.layout_start(rng)
             elif start == "record":
                 x0 = public[0]
             elif start == "public":
                 x0 = public[int(rng.integers(len(public)))]
                 x0 = mirror(x0) if rng.random() < 0.5 else x0
             else:
-                x0 = mine[min(int(rng.exponential(1.5)), len(mine) - 1)]
+                x0 = mine[int(rng.integers(len(mine)))]
             r = S.explore(
                 x0, min(p["chain_seconds"], left), seed=int(rng.integers(1 << 31)), donors=donors,
                 temperature=p["temperature"], patience=p["patience"], polish_iters=p["polish_iters"], move_weights=weights,
             )
             hops += r.steps
-            if start != "random" and (start_score is None or r.start.area < start_score):
+            fresh = start in ("random", "layout")
+            if not fresh and (start_score is None or r.start.area < start_score):
                 start_score = r.start.area
             # a chain only counts for what it newly found: not its own start, and not a public
             # arrangement that crossover happened to rebuild
-            known = public_areas + ([r.start.area] if start != "random" else [])
+            known = public_areas + ([r.start.area] if not fresh else [])
             new = [(a, i) for i, (_, a) in enumerate(r.attempts) if all(abs(a - k) > 1e-12 for k in known)]
             outcome = min(new)[0] if new else None
             cand = r.best
-            if start != "random":
+            if not fresh:
+                better = outcome is not None and outcome < r.start.area - 1e-12
                 started += 1
-                improved += outcome is not None and outcome < r.start.area - 1e-12
+                improved += better
+                if r.start.area <= top_bar + 1e-12:
+                    top_started += 1
+                    top_improved += better
             if outcome is not None:
                 scores.append(float(outcome))
             if best is None or cand.area < best.area:
@@ -98,15 +106,15 @@ class KakeyaNeedle(Problem):
             strings = S.offsets_to_strings(best.x)
             best_solution = {"offsets": strings}
             best_score = float(exact.exact_area(strings))
-        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"hops": hops, "params": p, "started_from_known": int(started), "improved_on_start": int(improved)}, start_score)
+        return AttemptBatch(scores, best_score, best_solution, time.time() - t0, {"hops": hops, "params": p, "started_from_known": int(started), "improved_on_start": int(improved), "top_started": int(top_started), "top_improved": int(top_improved)}, start_score)
 
     def exact_score(self, solution: dict) -> float:
         return float(exact.exact_area(solution["offsets"]))
 
     def lineage(self, kernel: str, params: dict) -> str:
-        if params.get("start") == "random" and params.get("donors") == "none":
+        if params.get("start") in ("random", "layout") and params.get("donors") == "none":
             return "from scratch"
-        if params.get("start") == "random" and params.get("donors") == "own":
+        if params.get("start") in ("random", "layout") and params.get("donors") == "own":
             return "from scratch, recombining our own arrangements"
         return "builds on public solutions (start or crossover donors)"
 
@@ -156,5 +164,10 @@ class KakeyaNeedle(Problem):
             "groups nested in 3-5 large ones) whose tops overlap; different group layouts are different local minima. The top "
             "three public solutions are three different layouts, each a strict local minimum; from each of them, thousands of "
             "structural moves found no improvement and the nearest other minimum is about 1.2e-6 higher. From a random "
-            "arrangement, 4 minutes of basin hopping reaches about 0.10700 (4th-5th place level); the record is 0.1067514."
+            "arrangement, 4 minutes of basin hopping reaches about 0.10700 (4th-5th place level); the record is 0.1067514. "
+            "Chains whose crossover donors include the public solutions reach 0.10677-0.10679 within 20 s but mostly by rebuilding the "
+            "second-place arrangement, which does not count as a discovery. The record needs a group layout nobody has tried: "
+            "start=layout samples new layouts (with donors=none or own these are genuinely new arrangements), and group_crossover "
+            "transplants whole groups between arrangements. Temperatures of 3e-6 to 3e-5 with patience 300+ let a chain cross the "
+            "1.2e-6 ridges between neighbouring minima; block_shift and kick mostly fall back to the same minimum."
         )

@@ -29,18 +29,19 @@ from .market import Market, ProblemState, Strategy, solution_sha
 
 SEEDS = {
     "kakeya-needle-128": [
-        ("hop", {"start": "random", "chain_seconds": 20}, "Baseline: basin hopping from random arrangements. If the landscape is a funnel, independent chains should land near the same area and the best of many chains should approach the record."),
+        ("hop", {"start": "layout", "chain_seconds": 20, "donors": "none"}, "Baseline from scratch: sample a new group layout (16 small groups in 4-5 large ones), polish, and hop. No public material is used, so anything found is a new arrangement. Refuted as a route to the record if the best of many chains stays above 0.1068."),
         ("hop", {"start": "public", "chain_seconds": 20, "temperature": 3e-6}, "The public top-5 are distinct layouts; hopping from them with a temperature above the 1.2e-6 gap to neighbouring minima may cross into a better layout."),
-        ("hop", {"start": "elite", "chain_seconds": 20, "w_crossover": 4.0}, "Recombination: splice blocks between our own best arrangements and the public ones. If good layouts share good sub-blocks, crossover-heavy chains from our elites should improve faster than chains from scratch."),
+        ("hop", {"start": "elite", "chain_seconds": 20, "w_group_crossover": 4.0, "w_crossover": 0.5, "temperature": 1e-5, "patience": 300}, "Recombination at group boundaries: transplant whole groups between our best arrangements and the public ones. If good layouts share good groups, this should improve our best faster than chains from scratch."),
     ],
     "two-deletion-code-16": [
         ("ils", {"start": "scratch", "chain_seconds": 20}, "Baseline: iterated local search from the empty code. Tests how far independent chains get without public codes."),
-        ("ils", {"start": "record", "chain_seconds": 20, "p_ruin": 0.1, "ruin_max": 40, "max_drop": 4}, "Walk the plateau of 226-word codes around the public record with larger ruins; a neighbouring 226-code may admit a 227th word even though the record itself does not."),
-        ("window", {"start": "record", "size": 40, "time_limit": 20}, "Exact window re-optimisation of the public 226 code: release 40 neighbouring codewords and solve the refill to optimality. Small exchanges are known to fail; this tests much larger exact neighbourhoods."),
+        ("ils", {"start": "public", "chain_seconds": 60, "tmax": 8, "accept": "metropolis", "temp": 1.5, "max_drop": 8, "p_force": 0.3, "p_ruin": 0.08, "ruin_min": 12, "ruin_max": 40, "ruin_mode": "band", "stall": 0},
+         "Reproduce the last leaderboard step: non-resetting Metropolis walks with weight-band ruins turned the public 225 code into new 226 codes in earlier runs. If the same walk can improve a 226 it gives 227; the ladder (improved/started per starting size) measures how close it is."),
+        ("window", {"start": "record", "geometry": "splice", "time_limit": 30}, "Exact splice: keep the record's light words and another good code's heavy words, and solve the two middle weight layers exactly with every compatible word as a candidate. Small exchanges and single or adjacent layers are proven not to help; this tests neighbourhoods that mix two codes."),
+        ("window", {"start": "record", "geometry": "difference", "time_limit": 30, "max_candidates": 12000}, "Exact difference window: keep only the words the record shares with a second good code and re-solve everything else exactly. Searches the region between two basins."),
     ],
     "flat-polynomials": [
         ("tabu", {"objective": "excess", "restart_after": 3000}, "Baseline: tabu search on the squared excess over a moving target level, from random sequences."),
-        ("tabu", {"objective": "excess", "restart_after": 300000}, "Much longer episodes: if good sequences sit at the bottom of long descents, fewer but deeper episodes should have a better tail than many short ones."),
     ],
 }
 
@@ -70,6 +71,7 @@ class Config:
     note: str = ""
     carry_from: list[str] = field(default_factory=list)  # earlier run ids whose lessons this run starts with
     app_id: str = ""  # Modal app that ran this (for reconciling estimated cost with the bill)
+    allocator: str = "priced"  # "priced" (Thompson sampling on prices) or "uniform" (ablation: fund k live strategies at random)
 
 
 class Loop:
@@ -206,11 +208,14 @@ class Loop:
         scores = [x for r in results for x in r["scores"]]
         errors = [r.get("error") for r in results if not r.get("ok")]
         s.batches.append(scores)
+        s.record_hits += sum(1 for x in scores if st.beats_record(x))
         for r in results:
             if r.get("start_score") is not None and (s.start_score is None or st.better(r["start_score"], s.start_score)):
                 s.start_score = float(r["start_score"])
             s.started += int(r.get("meta", {}).get("started_from_known", 0) or 0)
             s.improved += int(r.get("meta", {}).get("improved_on_start", 0) or 0)
+            s.top_started += int(r.get("meta", {}).get("top_started", 0) or 0)
+            s.top_improved += int(r.get("meta", {}).get("top_improved", 0) or 0)
             for level, (n_started, n_improved) in (r.get("meta", {}).get("ladder") or {}).items():
                 rung = s.ladder.setdefault(level, [0, 0])
                 rung[0] += int(n_started)
@@ -267,6 +272,14 @@ class Loop:
         )
         if scores:
             self.ledger.append("price", **self.market.price_event(s))
+        elif s.n_attempts() == 0:
+            s.empty_cards = getattr(s, "empty_cards", 0) + 1
+            if s.empty_cards >= 2:
+                s.retired = True
+            self.ledger.append("note", text=(
+                f"Card {card['cid']} for {s.sid} ({s.problem}) produced no attempt outcomes"
+                + (f" ({errors[0]})" if errors else " (its attempts did not finish within the card, or every window was skipped)")
+                + ("; second time, so the strategy is retired." if s.retired else "; it will get one more pilot.")))
         outcome = {"new_best": new_best, "beat_record": beat_record, "best": card_best}
         verdict = referee.judge(card["forecast"], outcome, st.maximize)
         self.ledger.append("referee", cid=card["cid"], sid=s.sid, forecast=card["forecast"], outcome=outcome, **verdict)
@@ -325,6 +338,7 @@ class Loop:
 
         # 2-3. new strategies and their pilots
         new = (self._seed_strategies() + self.carried) if self.cycle == 0 else []
+        new += [s for s in self.market.live() if s.n_attempts() == 0 and getattr(s, "empty_cards", 0) == 1]  # one retry for an empty pilot
         if self.pi and self.cycle > 0:
             for slug in cfg.problems:
                 new += self.pi.propose(self.market, registry.get(slug), slug, cfg.proposals_per_problem, cfg.pilot_usd)
@@ -332,13 +346,20 @@ class Loop:
         if pilots and self.budget_left() > cfg.pilot_usd * len(pilots):
             self._run_cards(pilots)
 
+        # 4. the PI rates every live strategy on the evidence (its rating is the strategy's opening price)
+        if self.pi:
+            for slug in cfg.problems:
+                self.pi.rate(self.market, registry.get(slug), slug)
+
         # 4-5. price everything and fund the best chances per dollar
         tranche = min(cfg.tranche_usd, self.budget_left())
         if tranche > 0.2 * cfg.tranche_usd:
-            table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd)
+            table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd, uniform=cfg.allocator == "uniform")
             names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
             self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(),
-                               note=f"Funded {names}: highest sampled chance of a record per equal share of the tranche (improving our own best only breaks ties).")
+                               note=(f"Funded {names}: chosen at random with equal shares (uniform-allocation control arm)." if cfg.allocator == "uniform" else
+                                     f"Funded {names}: highest sampled chance of a record, plus evidence of improving top known solutions; "
+                                     "the tranche is split in proportion to the draws."))
             self._run_cards([(s, "scale", usd) for s, usd in chosen])
 
         # 6. reflection
@@ -347,7 +368,9 @@ class Loop:
                 self.pi.reflect(self.market, registry.get(slug), slug, recent)
             self.pending_reflection = {}
 
-        self.ledger.append("cycle", n=self.cycle, phase="end", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
+        hours = max((time.time() - self.t0) / 3600.0, 1e-9)
+        self.ledger.append("cycle", n=self.cycle, phase="end", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent(),
+                           usd_per_hour=round(self.spent / hours, 3), hours=round(hours, 3))
 
     def _finish(self, reason: str) -> None:
         cfg = self.cfg

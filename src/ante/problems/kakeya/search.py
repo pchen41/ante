@@ -384,6 +384,38 @@ def mv_crossover(x, rng, ctx):
     return y
 
 
+def group_boundaries(x, thr: float = 0.4) -> np.ndarray:
+    """Indices i where a new group starts at i (offset jumps up by more than thr * W)."""
+    return np.nonzero(np.diff(x) > thr * W)[0] + 1
+
+
+def mv_group_crossover(x, rng, ctx):
+    """Splice whole groups from another good arrangement: the cut points are the donor's own group
+    boundaries, so groups are transplanted intact instead of being cut through the middle."""
+    n = x.size
+    pool = ctx.donor_pool(x)
+    if not pool:
+        return None
+    donor = pool[int(rng.integers(len(pool)))]
+    if donor.size != n:
+        return None
+    cuts = np.r_[0, group_boundaries(donor, float(rng.choice([0.4, 2.5]))), n]
+    if cuts.size < 3:
+        return None
+    i = int(rng.integers(0, cuts.size - 1))
+    j = min(cuts.size - 1, i + 1 + int(rng.integers(0, 4)))  # 1 to 4 consecutive donor groups
+    a, b = int(cuts[i]), int(cuts[j])
+    if b - a >= n:
+        return None
+    seg, cur = donor[a:b], x[a:b]
+    new = seg - seg.mean() + cur.mean() if rng.random() < 0.5 else seg - seg[0] + cur[0]
+    if float(np.max(np.abs(new - cur))) < 1e-9:
+        return None
+    y = x.copy()
+    y[a:b] = new
+    return y
+
+
 MOVES: dict[str, Callable] = {
     "block_shift": mv_block_shift,
     "scan_shift": mv_scan_shift,
@@ -392,6 +424,7 @@ MOVES: dict[str, Callable] = {
     "transfer": mv_transfer,
     "crossover": mv_crossover,
     "kick": mv_kick,
+    "group_crossover": mv_group_crossover,
 }
 
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -402,6 +435,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "transfer": 1.5,
     "crossover": 1.5,
     "kick": 1.0,
+    "group_crossover": 1.5,
 }
 
 
@@ -577,6 +611,38 @@ def random_start(rng: np.random.Generator, n: int = N) -> np.ndarray:
     """A crude from-scratch start: linear drift plus noise (no structure)."""
     j = np.arange(n, dtype=np.float64)
     x = -0.12 * j / n + rng.normal(0.0, 1.5 * W, n)
+    return x - x[0]
+
+
+def layout_start(rng: np.random.Generator, n: int = N) -> np.ndarray:
+    """A random arrangement with the structure every good solution shares: about 16 small groups of
+    3-11 neighbouring directions, nested in 4-5 large groups. Inside a group the offsets step down
+    by about 0.7/128; between small groups they jump up by about 1/128, between large groups by
+    5-10/128 (measured on the three best public solutions). The group sizes are sampled, so each
+    start is a different layout; polishing then finds that layout's local minimum."""
+    sizes = []
+    while sum(sizes) < n:
+        sizes.append(int(rng.integers(3, 12)))
+    sizes[-1] -= sum(sizes) - n
+    if sizes[-1] < 3 and len(sizes) > 1:
+        sizes[-2] += sizes.pop()
+    starts = np.cumsum(sizes)[:-1]  # index where each later group starts
+    n_large = int(rng.integers(3, 5))  # 3 or 4 large jumps -> 4 or 5 large groups
+    large = set()
+    if len(starts) > n_large:
+        targets = n * (np.arange(1, n_large + 1) / (n_large + 1)) + rng.normal(0.0, 6.0, n_large)
+        for t in targets:
+            large.add(int(starts[int(np.argmin(np.abs(starts - t)))]))
+    step = -rng.uniform(0.6, 0.8) * W
+    x = np.zeros(n)
+    boundary = set(int(v) for v in starts)
+    for i in range(1, n):
+        if i in large:
+            x[i] = x[i - 1] + rng.uniform(5.5, 9.5) * W
+        elif i in boundary:
+            x[i] = x[i - 1] + rng.uniform(0.6, 1.9) * W
+        else:
+            x[i] = x[i - 1] + step * rng.uniform(0.85, 1.15)
     return x - x[0]
 
 

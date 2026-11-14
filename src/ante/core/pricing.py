@@ -207,7 +207,8 @@ MIN_ATTEMPTS_FOR_TAIL_FIT = 30
 
 
 def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed: int = 0, n_samples: int = 200,
-          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR, integer: bool = False, sceptical: bool = True) -> Quote:
+          prior_usd: float = PRIOR_USD_TO_TARGET, xi_prior: float = XI_PRIOR, integer: bool = False, sceptical: bool = True,
+          n_total: int | None = None, s_total: int | None = None) -> Quote:
     """Price `target` from the attempt outcomes seen so far.
 
     Two models, combined conservatively.
@@ -231,10 +232,13 @@ def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed
     x = x[np.isfinite(x)]
     if x.size == 0:
         return Quote("none", 0, cost_per_attempt, np.zeros(0))
-    s = int((x >= target).sum() if maximize else (x <= target).sum())
+    # `attempts` may be a recent window (the tail fit should follow a drifting search), but the
+    # success count runs over the strategy's whole history: money spent without a record is never forgotten.
+    s = int((x >= target).sum() if maximize else (x <= target).sum()) if s_total is None else int(s_total)
+    n = int(x.size if n_total is None else max(n_total, x.size))
     rng = np.random.default_rng(seed)
     b0 = prior_usd / (2.0 * max(cost_per_attempt, 1e-12)) if sceptical else 0.5
-    counted = rng.beta(0.5 + s, b0 + x.size - s, size=n_samples)
+    counted = rng.beta(0.5 + s, b0 + n - s, size=n_samples)
     if integer or np.unique(x).size < 4 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
         return Quote("beta", int(x.size), cost_per_attempt, counted)
     fit = fit_tail(x, maximize=maximize, n_boot=n_samples, seed=seed, xi_prior=xi_prior)

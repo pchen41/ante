@@ -85,7 +85,7 @@ def band_window(t: Tables, code, lo: int, hi: int) -> np.ndarray:
     return code[(wt >= lo) & (wt <= hi)]
 
 
-def solve_packing(t: Tables, cands, min_size: int | None = None, time_limit: float = 30.0) -> dict:
+def solve_packing(t: Tables, cands, min_size: int | None = None, time_limit: float = 30.0, first_feasible: bool = False) -> dict:
     """Largest pairwise compatible subset of `cands` (distinct words).
 
     Returns {"status", "chosen" (int64 array or None), "upper_bound" (float or None),
@@ -117,7 +117,8 @@ def solve_packing(t: Tables, cands, min_size: int | None = None, time_limit: flo
         constraints=constraints,
         integrality=np.ones(m),
         bounds=Bounds(0, 1),
-        options={"time_limit": float(time_limit), "disp": False},
+        # with `min_size` set, any feasible point is already a gain: stop at the first one instead of proving optimality
+        options={"time_limit": float(time_limit), "disp": False, **({"mip_rel_gap": 0.5} if first_feasible else {})},
     )
     chosen = cands[np.asarray(res.x) > 0.5] if res.x is not None else None
     bound = getattr(res, "mip_dual_bound", None)
@@ -155,7 +156,7 @@ def solve_window(
     if m > max_candidates:
         return out
 
-    sol = solve_packing(t, cands, min_size=(n_rel + 1) if require_gain else None, time_limit=time_limit)
+    sol = solve_packing(t, cands, min_size=(n_rel + 1) if require_gain else None, time_limit=time_limit, first_feasible=require_gain)
     out["status"] = sol["status"]
     out["constraints"] = sol["constraints"]
     if sol["upper_bound"] is not None:
@@ -178,6 +179,53 @@ def solve_window(
         out["new_code"] = new_code
         out["new_size"] = int(size)
     return out
+
+
+def solve_fixed(t: Tables, fixed, baseline: int, time_limit: float = 30.0, max_candidates: int = 6000) -> dict:
+    """Keep the pairwise compatible words `fixed`, add every word compatible with all of them as a candidate,
+    and look for a completion that makes the whole code larger than `baseline` (exact; first feasible gain wins).
+    Returns the same report shape as `solve_window`."""
+    fixed = np.asarray(sorted(set(np.asarray(fixed, dtype=np.int64).tolist())), dtype=np.int64)
+    need = int(baseline) - int(fixed.shape[0]) + 1
+    cands = compatible_words(t, fixed)
+    cands = cands[~np.isin(cands, fixed)]
+    m = int(cands.shape[0])
+    out = {"released": need - 1, "candidates": m, "status": "skipped", "gain": 0, "proven_no_gain": False}
+    if m < need:
+        out["status"], out["proven_no_gain"] = "trivial", True
+        return out
+    if m > max_candidates:
+        return out
+    sol = solve_packing(t, cands, min_size=need, time_limit=time_limit, first_feasible=True)
+    out["status"], out["constraints"] = sol["status"], sol["constraints"]
+    chosen = sol["chosen"]
+    if chosen is None:
+        out["proven_no_gain"] = bool(sol["status"] == "infeasible")
+        return out
+    new_code = np.sort(np.concatenate([fixed, chosen]))
+    try:
+        size = exact.verify(ints_to_words(new_code, t.n))
+    except ValueError:
+        out["status"] = "invalid_solver_output"
+        return out
+    out["gain"] = int(size) - int(baseline)
+    if out["gain"] > 0:
+        out["new_code"], out["new_size"] = new_code, int(size)
+    return out
+
+
+def difference_fixed(code, donor) -> np.ndarray:
+    """The words two codes agree on. Re-solving everything else exactly searches the region between two basins."""
+    return np.intersect1d(np.asarray(code, dtype=np.int64), np.asarray(donor, dtype=np.int64))
+
+
+def splice_fixed(t: Tables, code, donor, k: int) -> np.ndarray:
+    """Words of `code` with weight <= k plus words of `donor` with weight >= k + 3. The two parts can never
+    conflict (conflicts only join weights at most 2 apart), so the two middle layers k+1, k+2 can be re-solved exactly."""
+    wt = weights(t.n)
+    code = np.asarray(code, dtype=np.int64)
+    donor = np.asarray(donor, dtype=np.int64)
+    return np.concatenate([code[wt[code] <= k], donor[wt[donor] >= k + 3]])
 
 
 def recombine_public(t: Tables, time_limit: float = 300.0, pair_time_limit: float = 30.0) -> dict:
