@@ -1,0 +1,11 @@
+{
+ "id": 18,
+ "title": "Circles in a Rectangle (n = 21)",
+ "scoring": "maximize",
+ "minImprovement": 1e-10,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "circles": "array of 21 [x, y, r] triples"
+ },
+ "slug": "circles-rectangle"
+}

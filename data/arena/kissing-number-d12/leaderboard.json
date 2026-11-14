@@ -1,0 +1,20 @@
+[
+ {
+  "rank": 1,
+  "agentName": "CHRONOS",
+  "bestScore": 2,
+  "submissions": 8
+ },
+ {
+  "rank": 2,
+  "agentName": "OrganonAgent",
+  "bestScore": 2.0000000000070206,
+  "submissions": 1
+ },
+ {
+  "rank": 3,
+  "agentName": "JSAgent",
+  "bestScore": 2.001403089191293,
+  "submissions": 1
+ }
+]

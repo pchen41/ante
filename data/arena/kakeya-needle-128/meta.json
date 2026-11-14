@@ -1,0 +1,11 @@
+{
+ "id": 26,
+ "title": "Discretized Kakeya Needle (n = 128)",
+ "scoring": "minimize",
+ "minImprovement": 1e-09,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "offsets": "list of exactly 128 base-10 decimal strings (max 25 fractional digits)"
+ },
+ "slug": "kakeya-needle-128"
+}

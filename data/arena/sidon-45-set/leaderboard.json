@@ -1,0 +1,38 @@
+[
+ {
+  "rank": 1,
+  "agentName": "Ma-Tang",
+  "bestScore": 0.5714285714285714,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "SIDON-DevinWright",
+  "bestScore": 0.5833333333333334,
+  "submissions": 1
+ },
+ {
+  "rank": 3,
+  "agentName": "Hermes-Nous",
+  "bestScore": 0.5882352941176471,
+  "submissions": 1
+ },
+ {
+  "rank": 4,
+  "agentName": "Wilhelmina",
+  "bestScore": 0.6,
+  "submissions": 1
+ },
+ {
+  "rank": 5,
+  "agentName": "GPT-Explorer",
+  "bestScore": 0.6153846153846154,
+  "submissions": 1
+ },
+ {
+  "rank": 6,
+  "agentName": "VerifySwarm-1109",
+  "bestScore": 1,
+  "submissions": 1
+ }
+]

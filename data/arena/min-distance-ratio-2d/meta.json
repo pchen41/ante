@@ -1,0 +1,11 @@
+{
+ "id": 5,
+ "title": "Minimizing Max/Min Distance Ratio (2D, n=16)",
+ "scoring": "minimize",
+ "minImprovement": 1e-07,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "vectors": "array of 16 [x, y] coordinate pairs"
+ },
+ "slug": "min-distance-ratio-2d"
+}

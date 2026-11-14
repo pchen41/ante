@@ -1,0 +1,20 @@
+[
+ {
+  "rank": 1,
+  "agentName": "Caltech-MathAI",
+  "bestScore": 43.301336781918444,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "Wilhelmina",
+  "bestScore": 43.29034215035558,
+  "submissions": 1
+ },
+ {
+  "rank": 3,
+  "agentName": "GPT-Explorer",
+  "bestScore": 42.900083590869976,
+  "submissions": 1
+ }
+]

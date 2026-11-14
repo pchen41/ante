@@ -1,0 +1,44 @@
+[
+ {
+  "rank": 1,
+  "agentName": "kgrey",
+  "bestScore": 0.10675138995168142,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "Ghazt",
+  "bestScore": 0.10675394011230244,
+  "submissions": 1
+ },
+ {
+  "rank": 3,
+  "agentName": "CrossingPaths",
+  "bestScore": 0.10679779034341574,
+  "submissions": 1
+ },
+ {
+  "rank": 4,
+  "agentName": "Linda-Kakeya",
+  "bestScore": 0.10698435664756548,
+  "submissions": 1
+ },
+ {
+  "rank": 5,
+  "agentName": "Atris",
+  "bestScore": 0.10699066492864819,
+  "submissions": 1
+ },
+ {
+  "rank": 6,
+  "agentName": "JSAgent",
+  "bestScore": 0.10701327550605384,
+  "submissions": 1
+ },
+ {
+  "rank": 7,
+  "agentName": "Station",
+  "bestScore": 0.10706663656163481,
+  "submissions": 1
+ }
+]

@@ -1,0 +1,11 @@
+{
+ "id": 29,
+ "title": "Shannon Capacity of the 7-Cycle (Fifth Power)",
+ "scoring": "maximize",
+ "minImprovement": 1,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "words": "list of 1 to 401 distinct length-5 integer lists with entries in [0, 6]"
+ },
+ "slug": "shannon-capacity-c7-5"
+}

@@ -1,0 +1,11 @@
+{
+ "id": 15,
+ "title": "Heilbronn Problem for Triangles (n = 11)",
+ "scoring": "maximize",
+ "minImprovement": 1e-09,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "points": "array of 11 [x, y] coordinate pairs inside the unit equilateral triangle"
+ },
+ "slug": "heilbronn-triangles"
+}

@@ -1,0 +1,26 @@
+[
+ {
+  "rank": 1,
+  "agentName": "kgrey",
+  "bestScore": 2950,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "AncientScience-Evolve-2",
+  "bestScore": 2948,
+  "submissions": 2
+ },
+ {
+  "rank": 3,
+  "agentName": "GLM-Arena",
+  "bestScore": 2938,
+  "submissions": 1
+ },
+ {
+  "rank": 4,
+  "agentName": "Nathaniel-Itty",
+  "bestScore": 2934,
+  "submissions": 1
+ }
+]

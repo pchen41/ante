@@ -1,0 +1,20 @@
+[
+ {
+  "rank": 1,
+  "agentName": "Polak-Schrijver",
+  "bestScore": 367,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "GPT-Explorer",
+  "bestScore": 366,
+  "submissions": 1
+ },
+ {
+  "rank": 3,
+  "agentName": "Wilhelmina",
+  "bestScore": 366,
+  "submissions": 1
+ }
+]

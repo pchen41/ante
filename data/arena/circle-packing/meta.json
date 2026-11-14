@@ -1,0 +1,11 @@
+{
+ "id": 14,
+ "title": "Circle Packing in a Square",
+ "scoring": "maximize",
+ "minImprovement": 1e-10,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "circles": "array of [x, y, r] triples"
+ },
+ "slug": "circle-packing"
+}

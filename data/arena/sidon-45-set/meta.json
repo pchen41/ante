@@ -1,0 +1,11 @@
+{
+ "id": 32,
+ "title": "Sidon Subsets of (4,5)-Sets",
+ "scoring": "minimize",
+ "minImprovement": 1e-09,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "elements": "list of 4 to 18 distinct integers in [-1000000000, 1000000000]"
+ },
+ "slug": "sidon-45-set"
+}

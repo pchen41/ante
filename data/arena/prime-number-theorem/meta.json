@@ -1,0 +1,11 @@
+{
+ "id": 7,
+ "title": "The Prime Number Theorem",
+ "scoring": "maximize",
+ "minImprovement": 1e-06,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "partial_function": "object mapping positive integer keys (as strings) to float values"
+ },
+ "slug": "prime-number-theorem"
+}

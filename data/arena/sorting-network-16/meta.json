@@ -1,0 +1,11 @@
+{
+ "id": 28,
+ "title": "Sorting Network (16 inputs)",
+ "scoring": "minimize",
+ "minImprovement": 1,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "comparators": "list of 1 to 60 integer pairs [i, j], where 0 <= i < j <= 15"
+ },
+ "slug": "sorting-network-16"
+}

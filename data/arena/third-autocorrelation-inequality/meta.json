@@ -1,0 +1,11 @@
+{
+ "id": 4,
+ "title": "Third Autocorrelation Inequality (Upper Bound)",
+ "scoring": "minimize",
+ "minImprovement": 1e-05,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "values": "array of floats (the discretized function values, may be negative)"
+ },
+ "slug": "third-autocorrelation-inequality"
+}

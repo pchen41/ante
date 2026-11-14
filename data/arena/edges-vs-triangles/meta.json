@@ -1,0 +1,11 @@
+{
+ "id": 13,
+ "title": "Edges vs Triangles (Minimal Triangle Density)",
+ "scoring": "maximize",
+ "minImprovement": 1e-06,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "weights": "2D array of shape (m, 20), each row non-negative"
+ },
+ "slug": "edges-vs-triangles"
+}

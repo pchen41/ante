@@ -1,0 +1,11 @@
+{
+ "id": 11,
+ "title": "Tammes Problem (n = 50)",
+ "scoring": "maximize",
+ "minImprovement": 1e-08,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "vectors": "array of 50 points, each [x, y, z]"
+ },
+ "slug": "tammes-problem"
+}

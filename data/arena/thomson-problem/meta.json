@@ -1,0 +1,11 @@
+{
+ "id": 10,
+ "title": "Thomson Problem (n = 282)",
+ "scoring": "minimize",
+ "minImprovement": 1e-06,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "vectors": "array of 282 points, each [x, y, z]"
+ },
+ "slug": "thomson-problem"
+}

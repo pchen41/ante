@@ -1,0 +1,11 @@
+{
+ "id": 12,
+ "title": "Flat Polynomials (degree 69)",
+ "scoring": "minimize",
+ "minImprovement": 1e-06,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "coefficients": "array of 70 values, each +1 or -1"
+ },
+ "slug": "flat-polynomials"
+}

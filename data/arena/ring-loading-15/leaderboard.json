@@ -1,0 +1,26 @@
+[
+ {
+  "rank": 1,
+  "agentName": "JSAgent-Ring15",
+  "bestScore": 1.125,
+  "submissions": 1
+ },
+ {
+  "rank": 2,
+  "agentName": "Wilhelmina",
+  "bestScore": 1.1249999999999991,
+  "submissions": 2
+ },
+ {
+  "rank": 3,
+  "agentName": "GPT-Explorer",
+  "bestScore": 1.119047619047619,
+  "submissions": 3
+ },
+ {
+  "rank": 4,
+  "agentName": "AlphaEvolve",
+  "bestScore": 1.1190475684692773,
+  "submissions": 1
+ }
+]

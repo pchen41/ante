@@ -1,0 +1,11 @@
+{
+ "id": 34,
+ "title": "Two-Deletion-Correcting Code (length 16)",
+ "scoring": "maximize",
+ "minImprovement": 1,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "words": "list of 1 to 16384 distinct strings, each containing exactly 16 binary digits"
+ },
+ "slug": "two-deletion-code-16"
+}

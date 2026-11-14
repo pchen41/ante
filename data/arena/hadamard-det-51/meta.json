@@ -1,0 +1,11 @@
+{
+ "id": 27,
+ "title": "Hadamard Maximal Determinant (order 51)",
+ "scoring": "maximize",
+ "minImprovement": 0,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "matrix": "51x51 array of integers, each entry 1 or -1"
+ },
+ "slug": "hadamard-det-51"
+}

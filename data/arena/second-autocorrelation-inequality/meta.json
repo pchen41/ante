@@ -1,0 +1,11 @@
+{
+ "id": 3,
+ "title": "Second Autocorrelation Inequality (Lower Bound)",
+ "scoring": "maximize",
+ "minImprovement": 1e-05,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "values": "array of non-negative floats (the discretized function values)"
+ },
+ "slug": "second-autocorrelation-inequality"
+}

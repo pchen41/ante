@@ -1,0 +1,11 @@
+{
+ "id": 1,
+ "title": "Erd\u0151s Minimum Overlap (Upper Bound)",
+ "scoring": "minimize",
+ "minImprovement": 1e-07,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "values": "array of floats (the discretized function values)"
+ },
+ "slug": "erdos-min-overlap"
+}

@@ -1,0 +1,11 @@
+{
+ "id": 19,
+ "title": "Difference Bases",
+ "scoring": "minimize",
+ "minImprovement": 1e-09,
+ "evaluationMode": "construction",
+ "solutionSchema": {
+  "set": "list of non-negative integers (up to 2000 elements)"
+ },
+ "slug": "difference-bases"
+}
