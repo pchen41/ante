@@ -249,7 +249,8 @@ class Market:
             t_rec, t_best = self.calibration.trust(source, "record"), self.calibration.trust(source, "new_best")
             pr = np.minimum(q_rec.p_within_samples(share) * t_rec, 1.0)
             pb = np.minimum(q_best.p_within_samples(share) * t_best, 1.0)
-            climb = float(self.rng.beta(0.5 + s.top_improved, 0.5 + s.top_started - s.top_improved)) if s.top_started else 0.0
+            # only observed climbing counts: with no success the Jeffreys draw alone would outbid real record chances
+            climb = float(self.rng.beta(0.5 + s.top_improved, 0.5 + s.top_started - s.top_improved)) if s.top_improved else 0.0
             draw = float(self.rng.choice(pr)) * (1.0 + LAMBDA_NEW_BEST * float(self.rng.choice(pb))) + W_CLIMB * climb
             if uniform:
                 draw = float(self.rng.random())
