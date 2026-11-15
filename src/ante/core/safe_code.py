@@ -56,6 +56,25 @@ def check(src: str, variables: tuple[str, ...]) -> str | None:
     return None
 
 
+def table(src: str, variables: tuple[str, ...], rows) -> tuple[list[float], int]:
+    """Evaluate the checked expression at every row of variable values. Returns (values, number of rows where it failed or
+    was not finite); failed rows get 0.0. Raises ValueError if the expression is rejected."""
+    why = check(src, variables)
+    if why:
+        raise ValueError(why)
+    code = compile(ast.parse(src.strip(), mode="eval"), "<priority>", "eval")
+    out, failed = [], 0
+    for values in rows:
+        try:
+            v = float(eval(code, {"__builtins__": {}}, {**FUNCS, **{k: float(x) for k, x in zip(variables, values)}}))  # noqa: S307 (whitelisted AST only)
+        except Exception:
+            v = float("nan")
+        if not math.isfinite(v) or abs(v) > 1e12:
+            v, failed = 0.0, failed + 1
+        out.append(v)
+    return out, failed
+
+
 def evaluator(src: str, variables: tuple[str, ...]):
     """A function of the variables (positional) that evaluates the checked expression; raises ValueError if rejected."""
     why = check(src, variables)

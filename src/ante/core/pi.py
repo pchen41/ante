@@ -188,7 +188,12 @@ class PI:
             if pr["kernel"] not in specs:
                 self.ledger.append("note", text=f"PI proposed unknown kernel {pr['kernel']!r} for {slug}; dropped.")
                 continue
-            params = specs[pr["kernel"]].resolve({kv["name"]: kv["value"] for kv in pr["params"]})
+            raw = {kv["name"]: kv["value"] for kv in pr["params"]}
+            rejected = [(k.name, k.reject_reason(raw[k.name])) for k in specs[pr["kernel"]].knobs if k.kind == "code" and k.name in raw and k.reject_reason(raw[k.name])]
+            if rejected:  # never substitute the default silently: the pilot would then test something the PI did not propose
+                self.ledger.append("note", text=f"PI proposal for {slug} dropped: its `{rejected[0][0]}` expression {raw[rejected[0][0]]!r} was rejected ({rejected[0][1]}).")
+                continue
+            params = specs[pr["kernel"]].resolve(raw)
             if market.is_duplicate(slug, pr["kernel"], params):
                 self.ledger.append("note", text=f"PI proposed a duplicate of an existing {slug} strategy; dropped.")
                 continue

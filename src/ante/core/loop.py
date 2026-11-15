@@ -25,7 +25,7 @@ from ante import problems as registry
 
 from . import arena, referee, runner as runner_mod, verify
 from .ledger import Ledger
-from .market import LAMBDA_NEW_BEST, W_CLIMB, Market, ProblemState, Strategy, solution_sha
+from .market import EXPLORE_SIGMA, LAMBDA_NEW_BEST, W_CLIMB, Market, ProblemState, Strategy, solution_sha
 
 SEEDS = {
     "kakeya-needle-128": [
@@ -47,13 +47,17 @@ SEEDS = {
         ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 12}, "Baseline from scratch: orbit-level iterated local search with the edge-first priority, then symmetry breaking. Refuted as a route to the record if no chain reaches a 27-orbit core."),
         ("orbits", {"start": "scratch", "method": "tabu", "chain_seconds": 12}, "Baseline from scratch with the repair search: force in one orbit too many and swap until no violation is left. Tests whether repair reaches larger cores than remove-and-refill."),
         ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 12, "axes": "offset-x"}, "A hint given to AlphaEvolve: the mirror axes need not pass through the centre of the grid. With the vertical axis moved half a cell the proven optimum for n = 16 appears at once; test it here."),
-        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 20, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 27-orbit core and re-solve small holes exactly: if a 28-orbit core or a better symmetry breaking lies near the record this finds it; if not, the record is locally optimal for these moves."),
+        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 60, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 27-orbit core and walk sideways through sets of the same size, testing each for one extra point: any 112-point set that admits a 113th point is a record."),
+        ("orbits", {"start": "record", "method": "tabu", "chain_seconds": 60}, "From the published core, force in a 28th and 29th orbit and repair by swaps: reaches sets that remove-and-refill cannot, because it passes through invalid sets."),
+        ("orbits", {"start": "elite", "method": "ils", "chain_seconds": 60, "ruin_max": 4, "p_exact": 0.3}, "Feed our best sets and the equal-size variants of known sets back in (as AlphaEvolve did with its previous best): a population walking the plateau of best-size sets covers far more of it than chains that always start from the same published set."),
     ],
     "isosceles-grid-100": [
         ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 30}, "Baseline from scratch: orbit-level iterated local search with the edge-first priority, then symmetry breaking. Refuted as a route to the record if no chain reaches a 41-orbit core."),
         ("orbits", {"start": "scratch", "method": "tabu", "chain_seconds": 30}, "Baseline from scratch with the repair search: force in one orbit too many and swap until no violation is left."),
         ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 30, "band": 11}, "Almost every orbit of the published record lies within 8 cells of the edge: restricting stage 1 to an 11-cell band shrinks the search space 2.5 times and may reach larger cores per second."),
-        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 40, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 41-orbit core and re-solve small holes exactly: a 42-orbit core, or a 41-orbit core that admits an extra mirror pair, would be a record."),
+        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 120, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 41-orbit core and walk sideways through 41-orbit sets, testing each for one extra point: any 164-point set that admits a 165th point is a record."),
+        ("orbits", {"start": "record", "method": "tabu", "chain_seconds": 120}, "From the published core, force in a 42nd orbit and repair by swaps: reaches sets that remove-and-refill cannot, because it passes through invalid sets."),
+        ("orbits", {"start": "elite", "method": "ils", "chain_seconds": 120, "ruin_max": 5, "p_exact": 0.3}, "Feed our best sets and the equal-size variants of known sets back in: long chains that improve 160-point sets step by step, the way the published record was reached from 160."),
     ],
 }
 
@@ -235,7 +239,7 @@ class Loop:
         st = self.market.problems[s.problem]
         base = zlib.crc32(f"{self.cfg.run_id}/{self.cfg.seed}/{card['cid']}".encode())
         jobs = [
-            {"problem": s.problem, "kernel": s.kernel, "params": s.params, "seed": (base + i) % (1 << 31), "seconds": card["seconds"], "elites": st.elite_solutions()}
+            {"problem": s.problem, "kernel": s.kernel, "params": s.params, "seed": (base + i) % (1 << 31), "seconds": card["seconds"], "elites": st.elite_solutions() + (st.pool_solutions() if getattr(registry.get(s.problem), "uses_start_pool", False) else [])}
             for i in range(card["workers"])
         ]
         return self.runner.run(jobs)
@@ -281,10 +285,7 @@ class Loop:
                 card_best = score
             started = r.get("start_score")
             if started is not None and not st.better(score, started):
-                # nothing better than its start. A different solution of the same score is still a useful starting point for later chains.
-                if score == started and p.is_public(r["best_solution"]) is None:
-                    st.add_elite(score, p.canonical(r["best_solution"]), r["best_solution"])
-                continue
+                continue  # nothing better than what it started from: not a result of ours (see the starting pool below)
             if p.is_public(r["best_solution"]) is not None:
                 continue  # a copy of a public solution is not ours
             if s.best is None or st.better(score, s.best):
@@ -307,18 +308,30 @@ class Loop:
                         f"RECORD CANDIDATE on {s.problem}: {score!r} vs record {st.record!r} (target {st.target!r}). "
                         f"Verification {'PASSED' if v['ok'] else 'FAILED'}: {v['checks']}. Held for a human decision; nothing was submitted."))
             break
-        # other workers' solutions as good as our best are kept as starting points too (a population walking a plateau)
-        if st.best is not None:
-            kept = 0
-            for r in claims[:40]:
-                if kept >= 8 or r["best_score"] != st.best:
+        # More starting points for later chains, from the other workers of this card (a population walking a plateau):
+        #  - a worker's own result (from scratch, or better than what it started from) that equals our best joins the elites;
+        #  - a different solution with the same score as the known solution it started from joins the starting pool. The pool
+        #    is kept apart from our results: nothing in it is ever a candidate, our best, or a record.
+        own = pooled = 0
+        for r in claims[:60]:
+            started = r.get("start_score")
+            is_own = started is None or st.better(r["best_score"], started)
+            if is_own and (own >= 8 or st.best is None or r["best_score"] != st.best):
+                continue
+            if not is_own and (pooled >= 8 or r["best_score"] != started):
+                continue
+            try:
+                score = float(p.exact_score(r["best_solution"]))
+                if score != r["best_score"] or p.is_public(r["best_solution"]) is not None:
                     continue
-                try:
-                    if float(p.exact_score(r["best_solution"])) == st.best and p.is_public(r["best_solution"]) is None:
-                        st.add_elite(st.best, p.canonical(r["best_solution"]), r["best_solution"])
-                        kept += 1
-                except Exception:
-                    pass
+            except Exception:
+                continue
+            if is_own:
+                st.add_elite(score, p.canonical(r["best_solution"]), r["best_solution"])
+                own += 1
+            else:
+                st.add_pool(score, p.canonical(r["best_solution"]), r["best_solution"])
+                pooled += 1
 
         import numpy as np
 
@@ -417,9 +430,9 @@ class Loop:
         if tranche > 0.2 * cfg.tranche_usd:
             table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd, uniform=cfg.allocator == "uniform")
             names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
-            self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(), weights={"climb": W_CLIMB, "new_best": LAMBDA_NEW_BEST},
+            self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(), weights={"climb": W_CLIMB, "new_best": LAMBDA_NEW_BEST, "explore_sigma": EXPLORE_SIGMA},
                                note=(f"Funded {names}: chosen at random with equal shares (uniform-allocation control arm)." if cfg.allocator == "uniform" else
-                                     f"Funded {names}: highest sampled chance of a record, plus evidence of improving top known solutions; "
+                                     f"Funded {names}: highest chance of a record (posterior mean with exploration noise), plus evidence of improving top known solutions; "
                                      "the tranche is split in proportion to the draws."))
             self._run_cards([(s, "scale", usd) for s, usd in chosen])
 

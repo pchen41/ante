@@ -18,6 +18,10 @@ DEFAULT_RATING = 0.0005  # P(record per $1) assumed for a strategy nobody has ra
 RATING_BOUNDS = (1e-7, 1.0 / 10.0)  # opening prices between $10 and $10M: a $5,000 ceiling erased the planner's low ratings
 RECENT_CARDS = 3  # tail fits use a strategy's most recent cards (its starting pool drifts as elites improve)
 W_CLIMB = 0.01  # allocator weight of climbing evidence (a heuristic, not a calibrated probability of a record; logged with every allocation)
+# Exploration noise of the allocator: each strategy's posterior-mean record chance is multiplied by exp(EXPLORE_SIGMA * N(0, 1)).
+# Raw Thompson draws from a Beta(0.5, b) posterior vary by orders of magnitude, which made funding close to a lottery among
+# strategies the planner had rated very differently (first grid-problem night run); this keeps exploration but lets ratings count.
+EXPLORE_SIGMA = 0.7
 
 
 def solution_sha(solution: dict) -> str:
@@ -83,7 +87,10 @@ class ProblemState:
     integer: bool = False
     best: float | None = None  # best independently checked score from our own cards
     best_sha: str | None = None
-    elites: list[tuple[float, str, dict]] = field(default_factory=list)  # (score, canonical key, solution), best first
+    elites: list[tuple[float, str, dict]] = field(default_factory=list)  # OUR results: (score, canonical key, solution), best first
+    # Starting points that are NOT our results: solutions a worker reached from a known solution without beating it
+    # (same score, different solution). Useful to start from; never a candidate, never "our best".
+    pool: list[tuple[float, str, dict]] = field(default_factory=list)
 
     def better(self, a: float, b: float | None) -> bool:
         if b is None:
@@ -100,8 +107,18 @@ class ProblemState:
         self.elites.sort(key=lambda e: -e[0] if self.maximize else e[0])
         del self.elites[keep:]
 
+    def add_pool(self, score: float, key: str, solution: dict, keep: int = 16) -> None:
+        if any(k == key for _, k, _ in self.pool) or any(k == key for _, k, _ in self.elites):
+            return
+        self.pool.insert(0, (score, key, solution))
+        self.pool.sort(key=lambda e: -e[0] if self.maximize else e[0])
+        del self.pool[keep:]
+
     def elite_solutions(self) -> list[dict]:
         return [s for _, _, s in self.elites]
+
+    def pool_solutions(self) -> list[dict]:
+        return [s for _, _, s in self.pool]
 
 
 class Calibration:
@@ -225,9 +242,9 @@ class Market:
 
     # ---- allocation -------------------------------------------------------------------------
     def allocate(self, tranche_usd: float, k: int, min_share_usd: float, uniform: bool = False) -> tuple[list[dict], list[tuple[Strategy, float]]]:
-        """Thompson sampling over priced strategies.
+        """Noisy-greedy allocation over priced strategies (posterior mean times log-normal exploration noise).
 
-        For each strategy, draw one plausible value of
+        For each strategy, take
           P(record within a nominal share of the tranche)                      [success counting, capped tail fit]
         + W_CLIMB * P(an attempt improves a top-3 known solution it started from) [the strongest evidence short of a record]
         the record chance multiplied by (1 + LAMBDA_NEW_BEST * P(new own best within the share)) [tie-breaker: it
@@ -251,7 +268,7 @@ class Market:
             pb = np.minimum(q_best.p_within_samples(share) * t_best, 1.0)
             # only observed climbing counts: with no success the Jeffreys draw alone would outbid real record chances
             climb = float(self.rng.beta(0.5 + s.top_improved, 0.5 + s.top_started - s.top_improved)) if s.top_improved else 0.0
-            draw = float(self.rng.choice(pr)) * (1.0 + LAMBDA_NEW_BEST * float(self.rng.choice(pb))) + W_CLIMB * climb
+            draw = float(pr.mean()) * float(np.exp(EXPLORE_SIGMA * self.rng.standard_normal())) * (1.0 + LAMBDA_NEW_BEST * float(pb.mean())) + W_CLIMB * climb
             if uniform:
                 draw = float(self.rng.random())
             rows.append({

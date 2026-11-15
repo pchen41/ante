@@ -34,12 +34,19 @@ class Knob:
     choices: list | None = None
     doc: str = ""
     variables: tuple = ()
+    validator: Any = None  # for "code" knobs: callable(source) -> reason it is unusable for this problem, or None
+
+    def reject_reason(self, value: Any) -> str | None:
+        """Why a "code" value would be replaced by the default (None if it is accepted)."""
+        from . import safe_code
+
+        if not isinstance(value, str):
+            return "not a string"
+        return safe_code.check(value, self.variables) or (self.validator(value.strip()) if self.validator else None)
 
     def clamp(self, value: Any) -> Any:
         if self.kind == "code":
-            from . import safe_code
-
-            return value.strip() if isinstance(value, str) and safe_code.check(value, self.variables) is None else self.default
+            return value.strip() if self.reject_reason(value) is None else self.default
         if self.kind == "choice":
             for c in self.choices:
                 if str(c).lower() == str(value).strip().lower():

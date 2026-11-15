@@ -42,7 +42,9 @@ def verify_construction(points):
 
 # --- wrapper (ours) -------------------------------------------------------------------------
 def evaluate(data):
-    points = [tuple(int(v) for v in p) for p in data["points"]]
+    points = [tuple(p) for p in data["points"]]
+    if any(len(p) != 2 or type(p[0]) is not int or type(p[1]) is not int for p in points):
+        raise ValueError("points must be pairs of integers")
     if not verify_construction(points):
         raise ValueError("verify_construction returned False")
     return float(len(points))

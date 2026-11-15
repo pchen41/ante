@@ -7,9 +7,14 @@ Everything is integer arithmetic; anyone can re-run it.
 
 from __future__ import annotations
 
+from numbers import Integral
+
 
 def check(points, n: int) -> int:
     """Return the number of points if the set is valid; raise ValueError otherwise."""
+    for x, y in points:
+        if not (isinstance(x, Integral) and isinstance(y, Integral)) or isinstance(x, bool) or isinstance(y, bool):
+            raise ValueError(f"coordinates must be integers, got ({x!r}, {y!r})")
     pts = [(int(x), int(y)) for x, y in points]
     if any(not (0 <= x < n and 0 <= y < n) for x, y in pts):
         raise ValueError(f"every point must lie in the grid 0..{n - 1}")

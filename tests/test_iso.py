@@ -51,13 +51,13 @@ def test_orbit_search_and_plugin_return_checked_sets():
     prio = sym.edge_priority(n, orb)
     best = 0
     for seed in range(6):
-        ids, k, _ = sym.run_sym(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 0.7, 1, 4, 0.6, 4, 0.4, 0.3, 200, cptr, cdx, cdy, 10**9)
-        pts = sym.orbits_to_points(n, orb, ids)
+        ids, ext, k, _ = sym.run_sym(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 0.7, 1, 4, 0.6, 4, 0.4, 0.3, 200, cptr, cdx, cdy, 10**9)
+        pts = sym.orbits_to_points(n, orb, ids, ext)
         assert exact.check(pts, n) == k
-        ids, k2, _ = sym.run_tabu(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 6, 0.3, 500, 2, cptr, cdx, cdy, 10**9)
-        assert exact.check(sym.orbits_to_points(n, orb, ids), n) == k2
+        ids, ext, k2, _ = sym.run_tabu(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 6, 0.3, 500, 2, cptr, cdx, cdy, 10**9)
+        assert exact.check(sym.orbits_to_points(n, orb, ids, ext), n) == k2
         best = max(best, k, k2)
-    assert best == 28
+    assert best >= 28  # 28 is the proven optimum; the count includes single points added to the symmetric core
 
     p = problems.get("isosceles-grid-64")
     assert p.record() == 112 and p.target() == 113
@@ -89,3 +89,45 @@ def test_expressions_that_would_raise_are_rejected_or_harmless():
         assert safe_code.check(bad, v) is not None
     f = safe_code.evaluator("1 / (x - 3) + log(y - 5)", v)  # divides by zero at x = 3: scores 0 there, never raises
     assert f(3, 9, 64) == 0.0 and f(4, 9, 64) != 0.0
+
+
+def test_checker_rejects_non_integer_coordinates():
+    with pytest.raises(ValueError):
+        exact.check([(-0.5, 0), (1.5, 0)], 5)
+    with pytest.raises(ValueError):
+        exact.check([(0.0, 0), (1, 0)], 5)
+    assert exact.check([(np.int64(0), 0), (1, 0)], 5) == 2
+
+
+def test_extra_single_points_are_found_on_top_of_an_orbit_set():
+    from ante.problems.iso import sym
+
+    n = 12
+    cptr, cdx, cdy = kernel.circle_table(n)
+    orb, osize = sym.orbit_table(n)
+    one = np.array([0], dtype=np.int64)  # a single orbit: plenty of single cells still fit
+    ids, ext, k, _ = sym.run_sym(n, orb, osize, sym.edge_priority(n, orb), one, 0, 1, 0.7, 1, 2, 0.6, 2, 0.4, 0.0, 50, cptr, cdx, cdy, 10**9)
+    assert len(ids) == 1 and len(ext) >= 1 and k == 4 + len(ext)
+    assert exact.check(sym.orbits_to_points(n, orb, ids, ext), n) == k
+
+
+def test_expressions_unusable_on_the_grid_are_reported_not_replaced():
+    from ante import problems
+    from ante.problems.iso.problem import priority_problem
+
+    assert priority_problem(64, "-min(x, y) + 0.2 * max(x, y)") is None
+    assert "fails" in priority_problem(64, "1 / min(x, y)")  # division by zero at the edge
+    assert priority_problem(64, "(exp(50)*exp(50)*exp(50)*exp(27))**4") is not None  # overflows when standardised
+    assert priority_problem(64, "3") == "is constant"
+    knob = [k for k in problems.get("isosceles-grid-64").kernels()["orbits"].knobs if k.name == "priority"][0]
+    assert knob.reject_reason("1 / x") is not None and knob.reject_reason("x + y") is None
+
+
+def test_starting_pool_is_separate_from_our_results():
+    from ante.core.market import ProblemState
+
+    st = ProblemState("p", True, 164.0, 165.0, integer=True)
+    st.add_elite(160.0, "a", {"points": []})
+    st.add_pool(164.0, "b", {"points": []})
+    st.add_pool(164.0, "a", {"points": []})  # already one of ours: not duplicated into the pool
+    assert [e[1] for e in st.elites] == ["a"] and [e[1] for e in st.pool] == ["b"] and st.best is None

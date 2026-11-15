@@ -43,38 +43,60 @@ def _table(n: int, axes: str, band: int, mirror_x: bool = True, mirror_y: bool =
     return orb, osize, (orb[:, 0] // n - x0).astype(np.float64), (orb[:, 0] % n - y0).astype(np.float64)
 
 
+def priority_problem(n: int, expr: str) -> str | None:
+    """Why `expr` cannot be used as a priority on the n x n grid (None if it can): it must evaluate to a finite
+    number at every orbit position and must not be constant."""
+    try:
+        vals, failed = safe_code.table(expr, PRIORITY_VARS, [(x, y, n) for x in range(n // 2 + 1) for y in range(n // 2 + 1)])
+    except ValueError as e:
+        return str(e)
+    if failed:
+        return f"fails or is not finite at {failed} of {len(vals)} positions (for example a division by zero at the edge, where x or y is 0)"
+    if max(vals) - min(vals) < 1e-12:
+        return "is constant"
+    return None
+
+
 def _priority(n: int, gx, gy, expr: str) -> np.ndarray:
     """prio[g] from the planner's expression, standardised to zero mean and unit spread."""
+    rows = [(float(x), float(y), float(n)) for x, y in zip(gx, gy)]
     try:
-        f = safe_code.evaluator(expr, PRIORITY_VARS)
+        vals, failed = safe_code.table(expr, PRIORITY_VARS, rows)
     except ValueError:
-        f = safe_code.evaluator(DEFAULT_PRIORITY, PRIORITY_VARS)
-    p = np.array([f(float(x), float(y), float(n)) for x, y in zip(gx, gy)], dtype=np.float64)
+        failed = 1
+    if failed:  # cannot happen for an expression that passed `priority_problem`; never let a bad one steer the search
+        vals, _ = safe_code.table(DEFAULT_PRIORITY, PRIORITY_VARS, rows)
+    p = np.clip(np.array(vals, dtype=np.float64), -1e9, 1e9)
     sd = float(p.std())
     return (p - p.mean()) / sd if sd > 1e-12 else np.zeros_like(p)
 
 
 def _timed(fn, start, seconds: float, seed: int):
-    """Call fn(start, iters, seed) -> (orbit ids, points, steps) in slices until `seconds` have passed, continuing from the best."""
+    """Call fn(start, iters, seed) -> (orbit ids, extra cells, points, steps) in slices until `seconds` have passed.
+
+    Each slice continues from the latest set of the best size (equal counts too, so the sideways walk carries
+    on across slices). Slices last about a tenth of the stage, so tabu lists and Metropolis excursions survive.
+    """
     t0 = time.time()
-    best, bk, steps, iters, i = start, None, 0, 30, 0
+    best, bext, bk, steps, iters, i = start, np.zeros(0, dtype=np.int64), None, 0, 10, 0
     while True:
         t1 = time.time()
-        ids, k, s = fn(best, iters, (seed + 7919 * i) % (1 << 31))
+        ids, ext, k, s = fn(best, iters, (seed + 7919 * i) % (1 << 31))
         i += 1
         steps += int(s)
-        if bk is None or k > bk:
-            best, bk = ids, int(k)
+        if bk is None or k >= bk:
+            best, bext, bk = ids, ext, int(k)
         left = seconds - (time.time() - t0)
         if left <= 0:
-            return best, bk, steps
+            return best, bext, bk, steps
         rate = max(int(s), 1) / max(time.time() - t1, 1e-4)
-        iters = int(max(10, min(rate * min(1.0, left), 100_000)))
+        iters = int(max(10, min(rate * min(max(1.0, seconds / 10.0), left), 2_000_000)))
 
 
 class IsoGrid(Problem):
     maximize = True
     integer_scores = True
+    uses_start_pool = True  # workers may also start from equal-size variants of known sets (never counted as results)
     n = 100
     RECORD = {64: 112, 100: 164}
     PREVIOUS = {64: 108, 100: 160}
@@ -109,11 +131,13 @@ class IsoGrid(Problem):
                     Knob("refine", "float", 0.2, 0.0, 0.8, doc="fraction of the chain spent in stage 2 (mirror pairs, then single points)"),
                     Knob("axes", "choice", "centre", choices=list(AXES), doc="where the two mirror axes sit: through the centre of the grid; the vertical axis moved half a cell (the set then lives in n-1 columns); or both moved"),
                     Knob("band", "int", 0, 0, 50, doc="if > 0, stage 1 only uses orbits within this many cells of the edge (0 = the whole grid)"),
-                    Knob("priority", "code", DEFAULT_PRIORITY, variables=PRIORITY_VARS, doc=(
+                    Knob("priority", "code", DEFAULT_PRIORITY, variables=PRIORITY_VARS, validator=lambda src: priority_problem(self.n, src), doc=(
                         "YOU WRITE THIS: an expression that scores every orbit; orbits with a higher value are tried first when a hole is refilled "
                         "(ils) or preferred for insertion (tabu). x and y are the distances of the orbit's lower-left point from the left and "
                         "bottom edges (0 .. n/2 - 1), n is the grid size. Allowed: numbers, x, y, n, + - * / // % **, comparisons, `a if c else b`, "
-                        "and, or, not, abs, min, max, sqrt, exp, log, sin, cos, floor, ceil. Values are standardised, so only the ranking matters")),
+                        "and, or, not, abs, min, max, sqrt, exp, log, sin, cos, floor, ceil. It must give a finite number at every position, including the "
+                        "edge where x or y is 0 (so no 1/x), and must not be constant; otherwise the proposal is dropped. Values are "
+                        "standardised, so only the ranking matters")),
                     Knob("noise", "float", 0.4, 0.0, 20.0, doc="random spread added to the standardised priority when ordering a refill (0 = strict priority order, large = random order)"),
                     Knob("ruin_max", "int", 6, 1, 24, doc="ils: each step removes between 1 and this many orbits"),
                     Knob("p_cluster", "float", 0.7, 0.0, 1.0, doc="ils: probability that the removed orbits are neighbours rather than random"),
@@ -133,26 +157,26 @@ class IsoGrid(Problem):
         return [{"chain_seconds": 4.0, "method": "ils", "p_exact": 0.5}, {"chain_seconds": 4.0, "method": "tabu"}]
 
     # ---- one worker ----------------------------------------------------------------------------
-    def _refine(self, core: list, seconds: float, seed: int, axes: str = "centre") -> list:
-        """Stage 2: add mirror pairs under one reflection (each tried from the core), then single points."""
+    def _refine(self, core: list, best: list, seconds: float, seed: int, axes: str = "centre") -> list:
+        """Stage 2: add mirror pairs under one reflection (each tried from the symmetric core), then single points
+        (from the best set so far). A different set of the same size replaces the incumbent, so the walk keeps moving."""
         from . import sym as S
 
         n, ct = self.n, _circles(self.n)
-        best = core
         for i, (mx, my) in enumerate(((True, False), (False, True))):
             orb, osize, gx, gy = _table(n, axes, 0, mx, my)
             prio = _priority(n, np.minimum(gx, n - 1 - gx), np.minimum(gy, n - 1 - gy), DEFAULT_PRIORITY)
             st = S.points_to_orbits(n, orb, osize, core)
-            ids, _, _ = _timed(lambda s, it, sd: S.run_sym(n, orb, osize, prio, s, it, sd, 0.7, 1, 3, 0.5, 2, 0.4, 0.3, 300, *ct, 10**9), st, 0.4 * seconds, seed + i)
-            cand = S.orbits_to_points(n, orb, ids)
-            if len(cand) > len(best):
+            ids, ext, _, _ = _timed(lambda s, it, sd: S.run_sym(n, orb, osize, prio, s, it, sd, 0.7, 1, 3, 0.5, 2, 0.4, 0.3, 300, *ct, 10**9), st, 0.4 * seconds, seed + i)
+            cand = S.orbits_to_points(n, orb, ids, ext)
+            if len(cand) >= len(best):
                 best = cand
         orb, osize, gx, gy = _table(n, "centre", 0, False, False)  # single cells: orbit id == cell id
         prio = _priority(n, np.minimum(gx, n - 1 - gx), np.minimum(gy, n - 1 - gy), DEFAULT_PRIORITY)
         st = np.array([x * n + y for x, y in best], dtype=np.int64)
-        ids, _, _ = _timed(lambda s, it, sd: S.run_sym(n, orb, osize, prio, s, it, sd, 0.7, 1, 3, 0.5, 2, 0.4, 0.3, 300, *ct, 10**9), st, 0.2 * seconds, seed + 2)
-        cand = S.orbits_to_points(n, orb, ids)
-        return cand if len(cand) > len(best) else best
+        ids, ext, _, _ = _timed(lambda s, it, sd: S.run_sym(n, orb, osize, prio, s, it, sd, 0.7, 1, 3, 0.5, 2, 0.4, 0.3, 300, *ct, 10**9), st, 0.2 * seconds, seed + 2)
+        cand = S.orbits_to_points(n, orb, ids, ext)
+        return cand if len(cand) >= len(best) else best
 
     def run(self, kernel_name: str, params: dict, seed: int, seconds: float, elites: list[dict] | None = None) -> AttemptBatch:
         from . import sym as S
@@ -173,11 +197,12 @@ class IsoGrid(Problem):
                     return S.run_sym(n, orb, osize, prio, s, it, sd, p["p_cluster"], 1, p["ruin_max"], p["temp"], p["max_drop"], p["noise"], p["p_exact"], p["exact_nodes"], *ct, 10**9)
             return orb, osize, stage1
 
-        mine = [[tuple(q) for q in e["points"]] for e in (elites or [])]
+        mine = [[tuple(q) for q in e["points"]] for e in (elites or [])]  # our own best sets, and equal-size variants of known sets
+        mine.sort(key=len, reverse=True)
         scores: list[float] = []
         best: list | None = None
         start_score = None
-        steps = started = improved = top_started = top_improved = 0
+        steps = started = improved = top_started = top_improved = invalid = 0
         ladder: dict[str, list[int]] = {}
         cores: dict[str, int] = {}
         while True:
@@ -204,16 +229,20 @@ class IsoGrid(Problem):
                 orb, osize, stage1 = setup(axes, 0)
                 st = S.points_to_orbits(n, orb, osize, x0)
             sd = int(rng.integers(1 << 31))
-            ids, _, s1 = _timed(stage1, st, chain * (1.0 - p["refine"]), sd)
+            ids, ext, _, s1 = _timed(stage1, st, chain * (1.0 - p["refine"]), sd)
             steps += s1
-            core = S.orbits_to_points(n, orb, ids)
+            core = S.orbits_to_points(n, orb, ids)  # the symmetric core
+            with_extras = S.orbits_to_points(n, orb, ids, ext)  # ... plus any single points found to fit along the way
             cores[str(len(ids))] = cores.get(str(len(ids)), 0) + 1
             t2 = chain * p["refine"]
-            final = self._refine(core, t2, sd, axes) if t2 >= 0.6 else core
-            size = exact.check(final, n)  # never report an unchecked set
+            final = self._refine(core, with_extras, t2, sd, axes) if t2 >= 0.6 else with_extras
+            try:
+                size = exact.check(final, n)  # never report an unchecked set
+            except ValueError:
+                invalid += 1  # would be a bug in the search code; this chain is dropped, the others still count
+                continue
             scores.append(float(size))
             if x0:
-                start_score = max(start_score or 0.0, float(len(x0)))
                 started += 1
                 improved += size > len(x0)
                 rung = ladder.setdefault(str(len(x0)), [0, 0])
@@ -222,9 +251,10 @@ class IsoGrid(Problem):
                 if len(x0) >= self.PREVIOUS[n]:
                     top_started += 1
                     top_improved += int(size > len(x0))
-            if best is None or size > len(best):
+            if best is None or size >= len(best):
                 best = final
-        meta = {"steps": steps, "params": p, "core_orbits": cores, "started_from_known": int(started), "improved_on_start": int(improved),
+                start_score = float(len(x0)) if x0 else None  # the start of the chain that produced the reported set
+        meta = {"steps": steps, "params": p, "core_orbits": cores, "invalid_sets": invalid, "started_from_known": int(started), "improved_on_start": int(improved),
                 "top_started": int(top_started), "top_improved": int(top_improved)}
         if ladder:
             meta["ladder"] = ladder
@@ -272,11 +302,13 @@ class IsoGrid(Problem):
         known = ("the published 112-point set is 27 complete orbits (108 points) plus 2 mirror pairs under one reflection only"
                  if n == 64 else "the published 164-point set is exactly 41 complete orbits, with no extra point at all")
         measured = ("from the empty set, 12-second ils chains end with a core of 24 orbits about 60% of the time, 25 about 25%, 26 about 5%; "
-                    "starting stage 2 from the published 27-orbit core reaches 112 within a second, so a 28-orbit core, or a different 27-orbit "
-                    "core that admits 3 extra pairs, would beat the record"
+                    "starting stage 2 from the published 27-orbit core reaches 112 within a second, and from that core stage 1 finds sets of 28 "
+                    "complete orbits, which only tie at 112. The record falls to any 112-point set that admits one more point: 28 orbits plus a "
+                    "point, 27 orbits plus 5 points, or 29 orbits"
                     if n == 64 else
                     "from the empty set, chains of a few minutes end with cores of 36 to 38 orbits (144 to 152 points); stage 2 from the published "
-                    "41-orbit core finds nothing, so the record falls to a 42-orbit core or to a 41-orbit core that admits an extra pair or point")
+"41-orbit core finds nothing, so the record falls to a 42-orbit core or to any 41-orbit core that admits one extra point. "
+                    "Every set of orbits as large as the largest seen in a chain is tested for extra single points")
         return (
             f"Choose as many points as possible from the {n} x {n} integer grid so that no point is equally far from two others (no isosceles "
             f"triangle; three equally spaced points on a line are forbidden too). AlphaEvolve problem 59. Best known: {rec} points "

@@ -117,6 +117,29 @@ def _is_free(g, orb, osize, sel, blk):
     return True
 
 
+MAX_EXTRA = 6  # single points tried on top of an orbit set (stage 2 looks for more)
+
+
+@njit(cache=True)
+def _extend(n, sel, pts, pos, k, blk, cptr, cdx, cdy, out):
+    """How many single cells can be added to the current (valid) set, greedily from a random cell onwards?
+    Their ids are written to `out`; the state is restored before returning. No free cell costs one scan of blk."""
+    N = n * n
+    off = np.random.randint(N)
+    m = 0
+    for i in range(N):
+        q = (i + off) % N
+        if sel[q] == 0 and blk[q] == 0:
+            k = add(n, q, sel, pts, pos, k, blk, cptr, cdx, cdy)
+            out[m] = q
+            m += 1
+            if m >= out.shape[0]:
+                break
+    for j in range(m - 1, -1, -1):
+        k = remove(n, out[j], sel, pts, pos, k, blk, cptr, cdx, cdy)
+    return m
+
+
 @njit(cache=True)
 def run_sym(n, orb, osize, prio, start, iters, seed, p_cluster, rmin, rmax, temp, max_drop, noise, p_exact, exact_nodes, cptr, cdx, cdy, target):
     """Iterated local search over orbits. `start`: orbit ids of a valid symmetric set (may be empty).
@@ -128,7 +151,13 @@ def run_sym(n, orb, osize, prio, start, iters, seed, p_cluster, rmin, rmax, temp
         limited to `exact_nodes` search nodes, stopping at the first refill larger than what was removed.
     The orbits just removed are tried last, so a step can walk sideways to a different set of the same
     size. Worse results are kept with Metropolis probability exp(delta / temp), never more than
-    max_drop points below the best. Returns (best orbit ids, best point count, steps done).
+    max_drop points below the best.
+
+    Every time the walk stands on a set of orbits as large as the largest seen, it also asks whether
+    single points (outside any orbit) can be added to that set: this is the cheap test for "this core
+    plus one point", made at every such set instead of once per chain. The result reported is the
+    orbit set with the most points including such extras; among equals, the latest.
+    Returns (orbit ids, extra cell ids, total points, steps done).
     """
     np.random.seed(seed)
     N, G = n * n, orb.shape[0]
@@ -155,8 +184,12 @@ def run_sym(n, orb, osize, prio, start, iters, seed, p_cluster, rmin, rmax, temp
     stack = np.zeros(G, dtype=np.int64)
     bstack = np.zeros(G, dtype=np.int64)
     was_removed = np.zeros(G, dtype=np.uint8)
+    ext = np.zeros(MAX_EXTRA, dtype=np.int64)
     best = olist[:ko].copy()
     bk = k
+    m = _extend(n, sel, pts, pos, k, blk, cptr, cdx, cdy, ext)
+    bext = ext[:m].copy()
+    bscore = k + m
     for it in range(iters):
         old_k = k
         nrem = 0
@@ -248,19 +281,21 @@ def run_sym(n, orb, osize, prio, start, iters, seed, p_cluster, rmin, rmax, temp
         for i in range(nrem):
             was_removed[removed[i]] = 0
         if k >= old_k or (bk - k <= max_drop and np.random.random() < np.exp((k - old_k) / temp)):
-            if k > bk:
+            if k >= bk:
                 bk = k
-                best = olist[:ko].copy()
-                if bk >= target:
-                    return best, bk, it + 1
-            elif k == bk:
-                best = olist[:ko].copy()  # the latest set of the best size: the next call continues the sideways walk from here
+                m = _extend(n, sel, pts, pos, k, blk, cptr, cdx, cdy, ext)
+                if k + m >= bscore:  # the latest among equals: the next call continues the sideways walk from here
+                    bscore = k + m
+                    best = olist[:ko].copy()
+                    bext = ext[:m].copy()
+                    if bscore >= target:
+                        return best, bext, bscore, it + 1
         else:  # undo the step
             for i in range(nadd):
                 k, ko = _odrop(n, added[i], orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
             for i in range(nrem):
                 k, ko = _oadd(n, removed[i], orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
-    return best, bk, iters
+    return best, bext, bscore, iters
 
 
 @njit(cache=True)
@@ -293,7 +328,8 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
     valid set one orbit larger, and the target grows again. If `stall` swaps pass without success, the
     search returns to its best valid set, removes `kick` random orbits and continues.
     Insertions are ranked by violations created - prio_weight * prio[g] (ties broken at random).
-    Returns (best valid orbit ids, its point count, steps done).
+    As in `run_sym`, every valid set as large as the largest seen is also tested for extra single points.
+    Returns (orbit ids of the best valid set, extra cell ids, total points, steps done).
     """
     np.random.seed(seed)
     N, G = n * n, orb.shape[0]
@@ -310,18 +346,25 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
     for g in start:
         if osel[g] == 0:
             k, ko = _oadd(n, g, orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
+    ext = np.zeros(MAX_EXTRA, dtype=np.int64)
     best = olist[:ko].copy()
     bk = k
+    m = _extend(n, sel, pts, pos, k, blk, cptr, cdx, cdy, ext)
+    bext = ext[:m].copy()
+    bscore = k + m
     V = 0
     since = 0
     for it in range(iters):
         if V == 0:
             if k >= bk:
-                grew = k > bk
                 bk = k
-                best = olist[:ko].copy()
-                if grew and bk >= target:
-                    return best, bk, it
+                m = _extend(n, sel, pts, pos, k, blk, cptr, cdx, cdy, ext)
+                if k + m >= bscore:
+                    bscore = k + m
+                    best = olist[:ko].copy()
+                    bext = ext[:m].copy()
+                    if bscore >= target:
+                        return best, bext, bscore, it
             since = 0
         elif since > stall:
             # give up on this size: back to the best valid set, minus a few random orbits
@@ -384,7 +427,7 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
         tabu[gbest] = it + tenure // 2 + np.random.randint(tenure // 2 + 1)
         V = _violations(pts, k, blk)
         since += 1
-    return best, bk, iters
+    return best, bext, bscore, iters
 
 
 def edge_priority(n: int, orb) -> np.ndarray:
@@ -393,5 +436,5 @@ def edge_priority(n: int, orb) -> np.ndarray:
     return -np.minimum(np.minimum(x, n - 1 - x), np.minimum(y, n - 1 - y)).astype(np.float64)
 
 
-def orbits_to_points(n: int, orb, ids) -> list[tuple[int, int]]:
-    return [(int(q) // n, int(q) % n) for g in ids for q in orb[int(g)] if q >= 0]
+def orbits_to_points(n: int, orb, ids, extras=()) -> list[tuple[int, int]]:
+    return [(int(q) // n, int(q) % n) for g in ids for q in orb[int(g)] if q >= 0] + [(int(q) // n, int(q) % n) for q in extras]

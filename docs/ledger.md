@@ -51,3 +51,10 @@ own units (the number the arena would report). Dollar amounts are USD.
 - **Budget.** The compute budget is checked between cycles, so a run can overshoot it by about one tranche.
 - **Allocation draw.** draw = sampled P(record within share) x (1 + 0.5 x sampled P(new own best)) + climbing weight x climbing rate.
   An earlier version added the new-best term, which let strategies polishing near-copies outbid everything (night3, first round).
+- **Allocation noise.** Since the grid-problem runs, a strategy's draw is its posterior-mean record chance times exp(0.7 x N(0,1)), not a raw
+  posterior sample: raw draws from a Beta(0.5, b) posterior vary by orders of magnitude and made funding close to a lottery. The value is
+  logged as `weights.explore_sigma` in every `allocation` event.
+- **Starting pool.** A solution a worker reached from a known solution without beating it (same score, different solution) is kept as a
+  starting point for later chains, in a pool separate from our own results. Nothing in the pool is ever a candidate, our best, or a record.
+- **Planner-written expressions.** A proposal whose expression is rejected (not on the whitelist, fails at some position, or constant) is
+  dropped with a `note`; the default is never substituted silently.
