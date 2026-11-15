@@ -15,7 +15,7 @@ from . import pricing
 
 LAMBDA_NEW_BEST = 0.5  # a strategy likely to improve our own best gets at most 1.5x its sampled record chance, never more
 DEFAULT_RATING = 0.0005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $2,000
-RATING_BOUNDS = (1.0 / 5000.0, 1.0 / 10.0)  # opening prices are kept between $10 and $5,000
+RATING_BOUNDS = (1e-7, 1.0 / 10.0)  # opening prices between $10 and $10M: a $5,000 ceiling erased the planner's low ratings
 RECENT_CARDS = 3  # tail fits use a strategy's most recent cards (its starting pool drifts as elites improve)
 W_CLIMB = 0.01  # allocator weight of climbing evidence (a heuristic, not a calibrated probability of a record; logged with every allocation)
 
