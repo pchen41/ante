@@ -63,6 +63,44 @@ def _pair(n, blk, px, py, bx, by, s, cptr, cdx, cdy):
 
 
 @njit(cache=True)
+def _cost(n, q, pts, k, blk, sel, cptr, cdx, cdy):
+    """How many currently free cells adding q would block (with multiplicity): the least-constraining refill takes the cheapest."""
+    px, py = q // n, q % n
+    c = 0
+    for i in range(k):
+        b = pts[i]
+        bx, by = b // n, b % n
+        d2 = (px - bx) ** 2 + (py - by) ** 2
+        for t in range(cptr[d2], cptr[d2 + 1]):
+            x, y = bx + cdx[t], by + cdy[t]
+            if 0 <= x < n and 0 <= y < n and blk[x * n + y] == 0 and sel[x * n + y] == 0 and x * n + y != q:
+                c += 1
+            x, y = px + cdx[t], py + cdy[t]
+            if 0 <= x < n and 0 <= y < n and blk[x * n + y] == 0 and sel[x * n + y] == 0:
+                c += 1
+        A, B = bx - px, by - py
+        C = bx * bx + by * by - px * px - py * py
+        if C % 2 != 0:
+            continue
+        C //= 2
+        if B == 0:
+            if C % A == 0:
+                x = C // A
+                if 0 <= x < n:
+                    for y in range(n):
+                        if blk[x * n + y] == 0 and sel[x * n + y] == 0 and x * n + y != q:
+                            c += 1
+        else:
+            for x in range(n):
+                r = C - A * x
+                if r % B == 0:
+                    y = r // B
+                    if 0 <= y < n and blk[x * n + y] == 0 and sel[x * n + y] == 0 and x * n + y != q:
+                        c += 1
+    return c
+
+
+@njit(cache=True)
 def add(n, q, sel, pts, pos, k, blk, cptr, cdx, cdy):
     px, py = q // n, q % n
     for i in range(k):
@@ -111,8 +149,9 @@ def _images(n, q, sym, out):
 
 
 @njit(cache=True)
-def _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, free):
-    """Add free cells until none is left. Among `greedy_k` random free cells the one nearest the boundary is taken."""
+def _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, free, lcv):
+    """Add free cells until none is left. Among `greedy_k` random free cells the one nearest the boundary is taken
+    (lcv=0), or the one that blocks the fewest other free cells (lcv=1, least-constraining)."""
     img = np.empty(4, dtype=np.int64)
     while True:
         nf = 0
@@ -127,11 +166,16 @@ def _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, fre
             best, bd = -1, 1 << 30
             for _ in range(greedy_k):
                 q = free[np.random.randint(nf)]
-                x, y = q // n, q % n
-                d = min(min(x, n - 1 - x), min(y, n - 1 - y))
+                if sel[q] == 1 or blk[q] != 0:
+                    continue  # taken or blocked since the free list was built
+                if lcv:
+                    d = _cost(n, q, pts, k, blk, sel, cptr, cdx, cdy)
+                else:
+                    x, y = q // n, q % n
+                    d = min(min(x, n - 1 - x), min(y, n - 1 - y))
                 if d < bd:
                     best, bd = q, d
-            if blk[best] != 0 or sel[best] == 1:
+            if best < 0 or blk[best] != 0 or sel[best] == 1:
                 continue
             c = _images(n, best, sym, img)
             added = 0
@@ -166,7 +210,7 @@ def _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, fre
 
 
 @njit(cache=True)
-def run(n, start, iters, seed, sym, greedy_k, p_ruin, rmin, rmax, cluster, temp, max_drop, cptr, cdx, cdy, target):
+def run(n, start, iters, seed, sym, greedy_k, p_ruin, rmin, rmax, cluster, temp, max_drop, cptr, cdx, cdy, target, lcv=0):
     """Iterated local search. `start`: cell ids of a valid set (may be empty). Returns (best cells, steps done)."""
     np.random.seed(seed)
     N = n * n
@@ -180,13 +224,15 @@ def run(n, start, iters, seed, sym, greedy_k, p_ruin, rmin, rmax, cluster, temp,
     k = 0
     for q in start:
         k = add(n, q, sel, pts, pos, k, blk, cptr, cdx, cdy)
-    k, _ = _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, 0, free)
+    k, _ = _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, 0, free, lcv)
     best = pts[:k].copy()
     bk = k
     for it in range(iters):
         old = k
         jn = 0
-        if np.random.random() < p_ruin or k < 3:
+        if k < 3:
+            k, jn = _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, free, lcv)
+        if (np.random.random() < p_ruin or k < 3) and k > 0:
             r = rmin + np.random.randint(rmax - rmin + 1)
             centre = pts[np.random.randint(k)]
             cx, cy = centre // n, centre % n
@@ -241,7 +287,7 @@ def run(n, start, iters, seed, sym, greedy_k, p_ruin, rmin, rmax, cluster, temp,
                     if blk[q] == 0:
                         k = add(n, q, sel, pts, pos, k, blk, cptr, cdx, cdy)
                         jr[jn], jn = q + 1, jn + 1
-        k, jn = _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, free)
+        k, jn = _refill(n, sel, pts, pos, k, blk, cptr, cdx, cdy, sym, greedy_k, jr, jn, free, lcv)
         accept = k >= old or (bk - k <= max_drop and np.random.random() < np.exp((k - old) / temp))
         if accept:
             if k > bk:
