@@ -79,3 +79,13 @@ def test_priority_expressions_are_whitelisted():
     spec = __import__("ante.problems", fromlist=["get"]).get("isosceles-grid-64").kernels()["orbits"]
     assert spec.resolve({"priority": "__import__('os').system('true')"})["priority"] == "-min(x, y)"
     assert spec.resolve({"priority": "x * y"})["priority"] == "x * y"
+
+
+def test_expressions_that_would_raise_are_rejected_or_harmless():
+    from ante.core import safe_code
+
+    v = ("x", "y", "n")
+    for bad in ("min(x)", "max()", "sqrt()", "abs(x, y)"):
+        assert safe_code.check(bad, v) is not None
+    f = safe_code.evaluator("1 / (x - 3) + log(y - 5)", v)  # divides by zero at x = 3: scores 0 there, never raises
+    assert f(3, 9, 64) == 0.0 and f(4, 9, 64) != 0.0

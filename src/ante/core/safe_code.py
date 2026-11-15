@@ -45,6 +45,14 @@ def check(src: str, variables: tuple[str, ...]) -> str | None:
             return "** needs a constant exponent of at most 4"
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow) and any(isinstance(m, ast.BinOp) and isinstance(m.op, ast.Pow) for m in ast.walk(node.left)):
             return "nested ** is not allowed"
+    code = compile(tree, "<priority>", "eval")
+    for sample in ((0.0,) * len(variables), (1.0, 2.0, 64.0)[: len(variables)] + (3.0,) * max(0, len(variables) - 3)):
+        try:
+            float(eval(code, {"__builtins__": {}}, {**FUNCS, **dict(zip(variables, sample))}))  # noqa: S307 (whitelisted AST only)
+        except (ArithmeticError, OverflowError):
+            pass  # e.g. a division by zero at this sample point: handled at run time
+        except Exception as e:  # wrong number of arguments, a non-number result, ...
+            return f"does not evaluate to a number ({type(e).__name__})"
     return None
 
 
@@ -58,7 +66,7 @@ def evaluator(src: str, variables: tuple[str, ...]):
     def f(*values):
         try:
             v = float(eval(code, {"__builtins__": {}}, {**FUNCS, **{k: float(v) for k, v in zip(variables, values)}}))  # noqa: S307 (whitelisted AST only)
-        except (ArithmeticError, ValueError, OverflowError):
+        except Exception:  # any failure at one point scores that point 0; it must never take a worker down
             return 0.0
         return v if math.isfinite(v) else 0.0
 

@@ -133,14 +133,14 @@ class IsoGrid(Problem):
         return [{"chain_seconds": 4.0, "method": "ils", "p_exact": 0.5}, {"chain_seconds": 4.0, "method": "tabu"}]
 
     # ---- one worker ----------------------------------------------------------------------------
-    def _refine(self, core: list, seconds: float, seed: int) -> list:
+    def _refine(self, core: list, seconds: float, seed: int, axes: str = "centre") -> list:
         """Stage 2: add mirror pairs under one reflection (each tried from the core), then single points."""
         from . import sym as S
 
         n, ct = self.n, _circles(self.n)
         best = core
         for i, (mx, my) in enumerate(((True, False), (False, True))):
-            orb, osize, gx, gy = _table(n, "centre", 0, mx, my)
+            orb, osize, gx, gy = _table(n, axes, 0, mx, my)
             prio = _priority(n, np.minimum(gx, n - 1 - gx), np.minimum(gy, n - 1 - gy), DEFAULT_PRIORITY)
             st = S.points_to_orbits(n, orb, osize, core)
             ids, _, _ = _timed(lambda s, it, sd: S.run_sym(n, orb, osize, prio, s, it, sd, 0.7, 1, 3, 0.5, 2, 0.4, 0.3, 300, *ct, 10**9), st, 0.4 * seconds, seed + i)
@@ -161,14 +161,18 @@ class IsoGrid(Problem):
         n, ct = self.n, _circles(self.n)
         rng = np.random.default_rng(seed)
         t0 = time.time()
-        orb, osize, gx, gy = _table(n, p["axes"], p["band"])
-        prio = _priority(n, gx, gy, p["priority"])
-        if p["method"] == "tabu":
-            def stage1(s, it, sd):
-                return S.run_tabu(n, orb, osize, prio, s, it, sd, p["tenure"], p["prio_weight"], p["stall"], p["kick"], *ct, 10**9)
-        else:
-            def stage1(s, it, sd):
-                return S.run_sym(n, orb, osize, prio, s, it, sd, p["p_cluster"], 1, p["ruin_max"], p["temp"], p["max_drop"], p["noise"], p["p_exact"], p["exact_nodes"], *ct, 10**9)
+
+        def setup(axes: str, band: int):
+            orb, osize, gx, gy = _table(n, axes, band)
+            prio = _priority(n, gx, gy, p["priority"])
+            if p["method"] == "tabu":
+                def stage1(s, it, sd):
+                    return S.run_tabu(n, orb, osize, prio, s, it, sd, p["tenure"], p["prio_weight"], p["stall"], p["kick"], *ct, 10**9)
+            else:
+                def stage1(s, it, sd):
+                    return S.run_sym(n, orb, osize, prio, s, it, sd, p["p_cluster"], 1, p["ruin_max"], p["temp"], p["max_drop"], p["noise"], p["p_exact"], p["exact_nodes"], *ct, 10**9)
+            return orb, osize, stage1
+
         mine = [[tuple(q) for q in e["points"]] for e in (elites or [])]
         scores: list[float] = []
         best: list | None = None
@@ -192,14 +196,20 @@ class IsoGrid(Problem):
                 x0 = pool[int(rng.integers(len(pool)))]
             else:
                 x0 = None
+            axes = p["axes"]
+            orb, osize, stage1 = setup(axes, 0 if x0 else p["band"])  # a known start is never cut down to the band
             st = S.points_to_orbits(n, orb, osize, x0) if x0 else np.zeros(0, dtype=np.int64)
+            if x0 and axes != "centre" and int(osize[st].sum()) < 0.8 * len(x0):
+                axes = "centre"  # the start is not symmetric about the requested axes: keep it whole instead
+                orb, osize, stage1 = setup(axes, 0)
+                st = S.points_to_orbits(n, orb, osize, x0)
             sd = int(rng.integers(1 << 31))
             ids, _, s1 = _timed(stage1, st, chain * (1.0 - p["refine"]), sd)
             steps += s1
             core = S.orbits_to_points(n, orb, ids)
             cores[str(len(ids))] = cores.get(str(len(ids)), 0) + 1
             t2 = chain * p["refine"]
-            final = self._refine(core, t2, sd) if t2 >= 0.6 else core
+            final = self._refine(core, t2, sd, axes) if t2 >= 0.6 else core
             size = exact.check(final, n)  # never report an unchecked set
             scores.append(float(size))
             if x0:

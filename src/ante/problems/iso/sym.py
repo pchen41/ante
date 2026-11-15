@@ -358,6 +358,10 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
                         c += blk[orb[g, t]]
                     if c > 0 and (h < 0 or np.random.random() < 0.3):
                         h = g
+            if h < 0:  # no orbit takes part in a violation: the count was stale
+                V = _violations(pts, k, blk)
+                since += 1
+                continue
             k, ko = _odrop(n, h, orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
             tabu[h] = it + tenure + np.random.randint(tenure + 1)
         # swap in (or, from a valid set, grow by) the orbit that creates the fewest violations
@@ -374,6 +378,7 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
         if gbest < 0:
             for g in range(G):
                 tabu[g] = 0
+            V = _violations(pts, k, blk)
             continue
         k, ko = _oforce(n, gbest, orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
         tabu[gbest] = it + tenure // 2 + np.random.randint(tenure // 2 + 1)
