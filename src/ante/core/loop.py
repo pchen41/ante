@@ -88,6 +88,7 @@ class Config:
     carry_from: list[str] = field(default_factory=list)  # earlier run ids whose lessons this run starts with
     app_id: str = ""  # Modal app that ran this (for reconciling estimated cost with the bill)
     allocator: str = "priced"  # "priced" (Thompson sampling on prices) or "uniform" (ablation: fund k live strategies at random)
+    seed_strategies: bool = True  # False: start only from carried strategies and the planner's own proposals (a continuation run)
 
 
 class Loop:
@@ -170,7 +171,8 @@ class Loop:
                 if e["type"] == "lesson" and e.get("problem") in self.cfg.problems and self.pi:
                     self.pi.lessons.setdefault(e["problem"], []).append(f"[run {run_id}] {e['text']}")
                     n += 1
-                if e["type"] == "candidate" and e.get("problem") in self.cfg.problems and "public" in str(e.get("lineage", "")):
+                if e["type"] == "candidate" and e.get("problem") in self.cfg.problems and e.get("sid") != "carried":
+                    # a planner strategy that produced a new best of ours (from scratch or from a known solution) is carried over
                     st = strategies.get(e["sid"])
                     if not st or st.get("source") != "pi":
                         continue
@@ -411,7 +413,7 @@ class Loop:
             self._adopt_carried_solutions()
 
         # 2-3. new strategies and their pilots
-        new = (self._seed_strategies() + self.carried) if self.cycle == 0 else []
+        new = ((self._seed_strategies() if self.cfg.seed_strategies else []) + self.carried) if self.cycle == 0 else []
         new += [s for s in self.market.live() if s.n_attempts() == 0 and getattr(s, "empty_cards", 0) == 1]  # one retry for an empty pilot
         if self.pi and self.cycle > 0:
             for slug in cfg.problems:
