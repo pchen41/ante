@@ -253,6 +253,8 @@ def run_sym(n, orb, osize, prio, start, iters, seed, p_cluster, rmin, rmax, temp
                 best = olist[:ko].copy()
                 if bk >= target:
                     return best, bk, it + 1
+            elif k == bk:
+                best = olist[:ko].copy()  # the latest set of the best size: the next call continues the sideways walk from here
         else:  # undo the step
             for i in range(nadd):
                 k, ko = _odrop(n, added[i], orb, osize, sel, pts, pos, k, blk, cptr, cdx, cdy, osel, olist, opos, ko)
@@ -314,10 +316,11 @@ def run_tabu(n, orb, osize, prio, start, iters, seed, tenure, prio_weight, stall
     since = 0
     for it in range(iters):
         if V == 0:
-            if k > bk:
+            if k >= bk:
+                grew = k > bk
                 bk = k
                 best = olist[:ko].copy()
-                if bk >= target:
+                if grew and bk >= target:
                     return best, bk, it
             since = 0
         elif since > stall:

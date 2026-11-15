@@ -96,7 +96,7 @@ class ProblemState:
     def add_elite(self, score: float, key: str, solution: dict, keep: int = 16) -> None:
         if any(k == key for _, k, _ in self.elites):
             return
-        self.elites.append((score, key, solution))
+        self.elites.insert(0, (score, key, solution))  # newest first among equal scores, so a plateau of equal solutions keeps moving
         self.elites.sort(key=lambda e: -e[0] if self.maximize else e[0])
         del self.elites[keep:]
 

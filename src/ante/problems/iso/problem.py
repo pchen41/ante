@@ -275,7 +275,11 @@ class IsoGrid(Problem):
             f"Structure: the best sets are (nearly) invariant under both mirror reflections of the grid, so they are unions of orbits of 4 points; "
             f"{known}. Almost every orbit of the published set lies within 8 cells of the edge of the grid, in an irregular pattern. "
             f"Measured here: {measured}. The priority expression is the main lever you have over where stage 1 looks: the default prefers "
-            "orbits near the edge; it is unknown which positions (corners, mid-edges, particular residues, a few interior orbits) matter."
+            "orbits near the edge; it is unknown which positions (corners, mid-edges, particular residues, a few interior orbits) matter. "
+            "How records were reached before: by feeding the best set back in and improving it, not from scratch. Here start=record does that "
+            "with the published set and start=elite with our own best sets; a different set of the same size as its start is kept as a "
+            "new starting point (never counted as a result), so repeated record- or elite-start cards walk the plateau of best-size sets. "
+            "From-scratch chains measure search power but end many steps below the record."
         )
 
 

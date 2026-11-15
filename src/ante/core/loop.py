@@ -307,6 +307,18 @@ class Loop:
                         f"RECORD CANDIDATE on {s.problem}: {score!r} vs record {st.record!r} (target {st.target!r}). "
                         f"Verification {'PASSED' if v['ok'] else 'FAILED'}: {v['checks']}. Held for a human decision; nothing was submitted."))
             break
+        # other workers' solutions as good as our best are kept as starting points too (a population walking a plateau)
+        if st.best is not None:
+            kept = 0
+            for r in claims[:40]:
+                if kept >= 8 or r["best_score"] != st.best:
+                    continue
+                try:
+                    if float(p.exact_score(r["best_solution"])) == st.best and p.is_public(r["best_solution"]) is None:
+                        st.add_elite(st.best, p.canonical(r["best_solution"]), r["best_solution"])
+                        kept += 1
+                except Exception:
+                    pass
 
         import numpy as np
 
