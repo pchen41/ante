@@ -169,6 +169,16 @@ class PI:
             "per pilot unless the evidence says long chains are the point. "
             "Also list any strategies to retire (only ones whose evidence shows they cannot reach the record)."
         )
+        code_knobs = [k.name for spec in problem.kernels().values() for k in spec.knobs if k.kind == "code"]
+        if code_knobs:
+            user += (
+                f"\n\nCODE YOU WRITE: the parameter `{code_knobs[0]}` is an expression you write yourself; it changes where the search looks, "
+                "which no numeric knob can do. At least half of your proposals must carry a new expression that differs from every one in "
+                "the table. Treat it as an experiment on structure: start from the best-performing expression so far, change one idea at a "
+                "time (for example how steeply the edge is preferred, corners against mid-edges, a residue pattern, a second band further "
+                "in), and say in the hypothesis which structure the expression encodes. Keep the other knobs of the parent strategy unless "
+                "you have a reason, so that the pilot isolates the effect of the expression."
+            )
         out = self.llm.json("propose", self.model, SYSTEM, user, PROPOSE_SCHEMA, effort=self.effort)
         new = []
         if not out:

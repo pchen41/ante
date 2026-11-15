@@ -43,6 +43,18 @@ SEEDS = {
     "flat-polynomials": [
         ("tabu", {"objective": "excess", "restart_after": 3000}, "Baseline: tabu search on the squared excess over a moving target level, from random sequences."),
     ],
+    "isosceles-grid-64": [
+        ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 12}, "Baseline from scratch: orbit-level iterated local search with the edge-first priority, then symmetry breaking. Refuted as a route to the record if no chain reaches a 27-orbit core."),
+        ("orbits", {"start": "scratch", "method": "tabu", "chain_seconds": 12}, "Baseline from scratch with the repair search: force in one orbit too many and swap until no violation is left. Tests whether repair reaches larger cores than remove-and-refill."),
+        ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 12, "axes": "offset-x"}, "A hint given to AlphaEvolve: the mirror axes need not pass through the centre of the grid. With the vertical axis moved half a cell the proven optimum for n = 16 appears at once; test it here."),
+        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 20, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 27-orbit core and re-solve small holes exactly: if a 28-orbit core or a better symmetry breaking lies near the record this finds it; if not, the record is locally optimal for these moves."),
+    ],
+    "isosceles-grid-100": [
+        ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 30}, "Baseline from scratch: orbit-level iterated local search with the edge-first priority, then symmetry breaking. Refuted as a route to the record if no chain reaches a 41-orbit core."),
+        ("orbits", {"start": "scratch", "method": "tabu", "chain_seconds": 30}, "Baseline from scratch with the repair search: force in one orbit too many and swap until no violation is left."),
+        ("orbits", {"start": "scratch", "method": "ils", "chain_seconds": 30, "band": 11}, "Almost every orbit of the published record lies within 8 cells of the edge: restricting stage 1 to an 11-cell band shrinks the search space 2.5 times and may reach larger cores per second."),
+        ("orbits", {"start": "record", "method": "ils", "chain_seconds": 40, "ruin_max": 4, "p_exact": 0.5}, "Start from the published 41-orbit core and re-solve small holes exactly: a 42-orbit core, or a 41-orbit core that admits an extra mirror pair, would be a record."),
+    ],
 }
 
 
@@ -109,8 +121,9 @@ class Loop:
         for slug in self.cfg.problems:
             p = registry.get(slug)
             meta = p.meta()
-            rows = arena.leaderboard(meta["id"]) if self.cfg.live_arena else None
-            source = "live" if rows else "snapshot"
+            on_arena = meta.get("id") is not None
+            rows = arena.leaderboard(meta["id"]) if (self.cfg.live_arena and on_arena) else None
+            source = "live" if rows else ("snapshot" if on_arena else meta.get("source", "published record"))
             rows = rows or p.leaderboard()
             record = float(rows[0]["bestScore"])
             target = p.target(record)
@@ -268,7 +281,10 @@ class Loop:
                 card_best = score
             started = r.get("start_score")
             if started is not None and not st.better(score, started):
-                continue  # it only returned what it started from: nothing new
+                # nothing better than its start. A different solution of the same score is still a useful starting point for later chains.
+                if score == started and p.is_public(r["best_solution"]) is None:
+                    st.add_elite(score, p.canonical(r["best_solution"]), r["best_solution"])
+                continue
             if p.is_public(r["best_solution"]) is not None:
                 continue  # a copy of a public solution is not ours
             if s.best is None or st.better(score, s.best):

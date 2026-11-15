@@ -40,7 +40,8 @@ def warm() -> None:
     for slug in problems.slugs():
         p = problems.get(slug)
         for name in p.kernels():
-            try:
-                p.run(name, {"chain_seconds": 3.0, "time_limit": 2.0}, 0, 4.0, [])
-            except Exception as e:
-                print("warm-up failed for", slug, name, repr(e))
+            for params in (p.warm_params() if hasattr(p, "warm_params") else [{"chain_seconds": 3.0, "time_limit": 2.0}]):
+                try:
+                    p.run(name, params, 0, 5.0, [])
+                except Exception as e:
+                    print("warm-up failed for", slug, name, repr(e))

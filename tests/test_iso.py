@@ -39,3 +39,43 @@ def test_search_returns_a_valid_set_that_cannot_be_extended(sym):
         if cell not in pts:
             with pytest.raises(ValueError):
                 exact.check(pts + [cell], n)
+
+
+def test_orbit_search_and_plugin_return_checked_sets():
+    from ante import problems
+    from ante.problems.iso import sym
+
+    n = 16
+    cptr, cdx, cdy = kernel.circle_table(n)
+    orb, osize = sym.orbit_table(n, n - 2, n - 1)  # vertical axis moved half a cell: the proven optimum 28 is of this type
+    prio = sym.edge_priority(n, orb)
+    best = 0
+    for seed in range(6):
+        ids, k, _ = sym.run_sym(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 0.7, 1, 4, 0.6, 4, 0.4, 0.3, 200, cptr, cdx, cdy, 10**9)
+        pts = sym.orbits_to_points(n, orb, ids)
+        assert exact.check(pts, n) == k
+        ids, k2, _ = sym.run_tabu(n, orb, osize, prio, np.zeros(0, dtype=np.int64), 3000, seed, 6, 0.3, 500, 2, cptr, cdx, cdy, 10**9)
+        assert exact.check(sym.orbits_to_points(n, orb, ids), n) == k2
+        best = max(best, k, k2)
+    assert best == 28
+
+    p = problems.get("isosceles-grid-64")
+    assert p.record() == 112 and p.target() == 113
+    rec = p.public_solutions()[0]["data"]
+    assert p.exact_score(rec) == 112 and p.is_public(rec) is not None
+    mirrored = {"points": [[63 - x, y] for x, y in rec["points"]]}
+    assert p.is_public(mirrored) is not None  # provenance check is modulo the symmetries of the square
+    b = p.run("orbits", {"start": "scratch", "chain_seconds": 4}, 1, 6.0, [])
+    assert b.best_solution is not None and p.exact_score(b.best_solution) == b.best_score >= 80
+
+
+def test_priority_expressions_are_whitelisted():
+    from ante.core import safe_code
+
+    v = ("x", "y", "n")
+    assert safe_code.check("-min(x, y) + (2 if x % 7 == 3 else 0)", v) is None
+    for bad in ("__import__('os')", "x.real", "[x][0]", "open('f')", "9**9**9", "(x**2)**2", "z + 1", "lambda: 1", "x; y", ""):
+        assert safe_code.check(bad, v) is not None
+    spec = __import__("ante.problems", fromlist=["get"]).get("isosceles-grid-64").kernels()["orbits"]
+    assert spec.resolve({"priority": "__import__('os').system('true')"})["priority"] == "-min(x, y)"
+    assert spec.resolve({"priority": "x * y"})["priority"] == "x * y"

@@ -27,13 +27,13 @@ except Exception as e:
 """
 
 
-def official_sandbox(slug: str, solution: dict, timeout: int = 900) -> dict:
-    """Run the arena's verifier on `solution` inside a network-blocked Modal Sandbox."""
+def official_sandbox(slug: str, solution: dict, timeout: int = 900, source: str | None = None) -> dict:
+    """Run the official verifier on `solution` inside a network-blocked Modal Sandbox."""
     import modal
 
     app = modal.App.lookup("ante-sandbox", create_if_missing=True)
     image = modal.Image.debian_slim(python_version="3.12").pip_install("numpy==2.5.4", "scipy==1.18.1", "sympy==1.14.0")
-    source = (Path(DATA) / slug / "verifier.py.txt").read_text()
+    source = source if source is not None else (Path(DATA) / slug / "verifier.py.txt").read_text()
     sb = modal.Sandbox.create(app=app, image=image, block_network=True, timeout=timeout, cpu=1.0, memory=2048, workdir="/work")
     try:
         sb.filesystem.write_text(source, "/work/verifier.py")
@@ -71,7 +71,7 @@ def gauntlet(problem, solution: dict, ledger, sha: str, sandbox: bool = True) ->
 
     if sandbox and indep is not None:
         try:
-            r = official_sandbox(slug, solution)
+            r = official_sandbox(slug, solution, source=problem.verifier_source())
             if r.get("ok"):
                 agree = scores_agree(r["score"], indep, problem.integer_scores)
                 checks["official-sandbox"] = (agree, r["score"], "official verifier in a network-blocked sandbox" + ("" if agree else f"; DISAGREES with independent score {indep!r}"))

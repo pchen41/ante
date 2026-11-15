@@ -27,14 +27,19 @@ class AttemptBatch:
 @dataclass
 class Knob:
     name: str
-    kind: str  # "int" | "float" | "choice"
+    kind: str  # "int" | "float" | "choice" | "code" (an arithmetic expression in `variables`, see safe_code.py)
     default: Any
     lo: float | None = None
     hi: float | None = None
     choices: list | None = None
     doc: str = ""
+    variables: tuple = ()
 
     def clamp(self, value: Any) -> Any:
+        if self.kind == "code":
+            from . import safe_code
+
+            return value.strip() if isinstance(value, str) and safe_code.check(value, self.variables) is None else self.default
         if self.kind == "choice":
             for c in self.choices:
                 if str(c).lower() == str(value).strip().lower():
@@ -63,7 +68,8 @@ class KernelSpec:
     def describe(self) -> str:
         lines = [f"kernel `{self.name}`: {self.doc}"]
         for k in self.knobs:
-            rng = f"one of {k.choices}" if k.kind == "choice" else f"{k.kind} in [{k.lo}, {k.hi}]"
+            rng = (f"one of {k.choices}" if k.kind == "choice" else f"an arithmetic expression in {', '.join(k.variables)}" if k.kind == "code"
+                   else f"{k.kind} in [{k.lo}, {k.hi}]")
             lines.append(f"  - {k.name} ({rng}, default {k.default}): {k.doc}")
         return "\n".join(lines)
 
@@ -127,6 +133,10 @@ class Problem:
     def audit(self, solution: dict) -> dict:
         """Problem-specific checks that a score is not a verifier artefact."""
         return {}
+
+    def verifier_source(self) -> str:
+        """Source of the official (third-party) verifier; it must define evaluate(solution) -> score. Only ever run sandboxed."""
+        return (DATA / self.slug / "verifier.py.txt").read_text()
 
     def brief(self) -> str:
         """What the PI is told about this problem."""

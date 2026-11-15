@@ -36,6 +36,7 @@ image = (
           "NUMBA_CPU_NAME": "x86-64-v3",
           "NUMBA_CPU_FEATURES": "+avx,+avx2,+bmi,+bmi2,+f16c,+fma,+lzcnt,+movbe,+popcnt,+sse3,+ssse3,+sse4.1,+sse4.2,+cx16,+sahf,+xsave"})
     .add_local_dir(ROOT / "data" / "arena", "/root/data/arena", copy=True)
+    .add_local_dir(ROOT / "data" / "alphaevolve", "/root/data/alphaevolve", copy=True)
     .add_local_dir(ROOT / "src" / "ante", "/root/src/ante", copy=True, ignore=["**/__pycache__"])
     .run_function(_warm)  # compile numba kernels and build lookup tables into the image
 )
