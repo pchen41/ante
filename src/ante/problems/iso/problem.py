@@ -321,7 +321,10 @@ class IsoGrid(Problem):
             "How records were reached before: by feeding the best set back in and improving it, not from scratch. Here start=record does that "
             "with the published set and start=elite with our own best sets; a different set of the same size as its start is kept as a "
             "new starting point (never counted as a result), so repeated record- or elite-start cards walk the plateau of best-size sets. "
-            "From-scratch chains measure search power but end many steps below the record."
+            "From-scratch chains measure search power but end many steps below the record. "
+            "Caution about older lessons: in runs before iso-night2 a chain restarted from the same set every second and tested only one "
+            "set per chain for extra points, so lessons saying that record-start or elite-start chains found nothing were measured under "
+            "that defect. Chains now walk on continuously and test every best-size set; those strategies need re-testing, with long chains."
         )
 
 
