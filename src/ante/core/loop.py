@@ -95,6 +95,7 @@ class Loop:
         self.cycle = 0
         self.pending_reflection: dict[str, list[dict]] = {}
         self.carried: list[Strategy] = []
+        self.carried_solutions: list[tuple[str, str, dict]] = []  # (run id, problem, solution) from earlier runs
         self.t0 = time.time()
 
     # ---- helpers ----------------------------------------------------------------------------
@@ -129,7 +130,10 @@ class Loop:
         for slug in self.cfg.problems:
             p = registry.get(slug)
             for kernel, params, hyp in SEEDS.get(slug, []):
-                s = Strategy(self.market.new_sid(), slug, kernel, p.kernels()[kernel].resolve(params), hyp, rationale="built-in baseline", source="seed", proposer="seed")
+                resolved = p.kernels()[kernel].resolve(params)
+                if self.market.is_duplicate(slug, kernel, resolved):
+                    continue  # already present, carried over from an earlier run
+                s = Strategy(self.market.new_sid(), slug, kernel, resolved, hyp, rationale="built-in baseline", source="seed", proposer="seed")
                 self.market.add(s)
                 self.ledger.append("strategy", **s.public())
                 new.append(s)
@@ -164,7 +168,32 @@ class Loop:
                     self.carried.append(carried)
                     self.ledger.append("strategy", **carried.public())
                     n += 1
+            for f in sorted((self.dir.parent / run_id / "candidates").glob("*.json")):
+                c = json.loads(f.read_text())
+                if c.get("problem") in self.cfg.problems:
+                    self.carried_solutions.append((run_id, c["problem"], c["solution"]))
             self.ledger.append("note", text=f"Carried {n} lessons and proven strategies over from run {run_id}.")
+
+    def _adopt_carried_solutions(self) -> None:
+        """Continue from the best solutions of earlier runs. Each is re-scored by the independent checker first."""
+        for run_id, slug, solution in self.carried_solutions:
+            p, st = registry.get(slug), self.market.problems[slug]
+            try:
+                score = float(p.exact_score(solution))
+            except Exception as e:
+                self.ledger.append("note", text=f"A solution carried from run {run_id} for {slug} failed the independent checker ({e}); ignored.")
+                continue
+            if p.is_public(solution) is not None:
+                continue
+            st.add_elite(score, p.canonical(solution), solution)
+            if st.better(score, st.best):
+                sha = solution_sha(solution)
+                st.best, st.best_sha = score, sha
+                path = self.dir / "candidates" / f"{slug}-{sha}.json"
+                path.write_text(json.dumps({"problem": slug, "score": score, "sid": "carried", "cid": f"run {run_id}", "seed": None, "solution": solution}))
+                self.ledger.append("candidate", problem=slug, score=score, cid=f"run {run_id}", sid="carried", solution_sha=sha,
+                                   path=str(path.relative_to(self.dir)), lineage=f"carried over from run {run_id}")
+        self.carried_solutions = []
 
     # ---- cards ------------------------------------------------------------------------------
     def _plan_card(self, s: Strategy, stage: str, budget_usd: float) -> dict:
@@ -335,6 +364,8 @@ class Loop:
         cfg = self.cfg
         self.ledger.append("cycle", n=self.cycle, phase="start", spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent())
         self._snapshot()
+        if self.carried_solutions:
+            self._adopt_carried_solutions()
 
         # 2-3. new strategies and their pilots
         new = (self._seed_strategies() + self.carried) if self.cycle == 0 else []
