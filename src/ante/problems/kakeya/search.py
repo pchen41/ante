@@ -455,6 +455,7 @@ class ExploreResult:
     restarts: int
     seconds: float
     attempts: list = field(default_factory=list)  # (move name, polished area) of every completed hop
+    best_new: Polished | None = None  # best arrangement that is neither the start nor a known (public) one
 
 
 def explore(
@@ -468,6 +469,8 @@ def explore(
     polish_iters: int = 150,
     trace_every: float = 5.0,
     move_weights: dict | None = None,
+    known_areas: Sequence[float] = (),
+    exclude_start: bool = False,
 ) -> ExploreResult:
     """Basin hopping with structural moves; Metropolis acceptance on polished areas.
 
@@ -510,6 +513,8 @@ def explore(
     restarts = 0
     next_trace = trace_every
     attempts: list = []
+    known = list(known_areas) + ([start.area] if exclude_start else [])
+    best_new = None if (exclude_start or any(abs(start.area - k) <= 1e-12 for k in known)) else start
 
     while True:
         now = time.perf_counter() - t0
@@ -534,6 +539,8 @@ def explore(
 
         d = res.area - cur.area
         attempts.append((name, res.area))
+        if (best_new is None or res.area < best_new.area) and all(abs(res.area - k) > 1e-12 for k in known):
+            best_new = res
         if abs(d) < 1e-12 and float(np.max(np.abs(res.x - cur.x))) < 1e-7:
             st["returned_to_current"] += 1
             since_best += 1
@@ -581,6 +588,7 @@ def explore(
         restarts=restarts,
         seconds=elapsed,
         attempts=attempts,
+        best_new=best_new,
     )
 
 

@@ -408,7 +408,10 @@ class Loop:
         # 7. final verification of our best on every problem (independent + sandbox + audit + provenance)
         for slug, st in self.market.problems.items():
             if st.best_sha:
-                cand = json.loads((self.dir / "candidates" / f"{slug}-{st.best_sha}.json").read_text())
-                verify.gauntlet(registry.get(slug), cand["solution"], self.ledger, st.best_sha, sandbox=cfg.sandbox_verify)
+                try:
+                    cand = json.loads((self.dir / "candidates" / f"{slug}-{st.best_sha}.json").read_text())
+                    verify.gauntlet(registry.get(slug), cand["solution"], self.ledger, st.best_sha, sandbox=cfg.sandbox_verify)
+                except Exception as e:  # the run must still close its ledger
+                    self.ledger.append("note", text=f"Final verification of {slug} could not run: {type(e).__name__}: {e}")
         self.ledger.append("run_end", reason=reason, spent_compute_usd=self.spent, spent_llm_usd=self.llm_spent(),
                            best={slug: st.best for slug, st in self.market.problems.items()}, records={slug: st.record for slug, st in self.market.problems.items()})

@@ -58,6 +58,7 @@ class KakeyaNeedle(Problem):
         start_score = None
         started = improved = top_started = top_improved = 0
         top_bar = sorted(public_areas)[2]  # area of the third-best public solution
+        second_best = sorted(public_areas)[1]
         while True:
             left = seconds - (time.time() - t0)
             if left < 2.0 or (scores and left < 0.5 * p["chain_seconds"]):
@@ -76,12 +77,13 @@ class KakeyaNeedle(Problem):
                 x0 = mirror(x0) if rng.random() < 0.5 else x0
             else:
                 x0 = mine[int(rng.integers(len(mine)))]
+            fresh = start in ("random", "layout")
             r = S.explore(
                 x0, min(p["chain_seconds"], left), seed=int(rng.integers(1 << 31)), donors=donors,
                 temperature=p["temperature"], patience=p["patience"], polish_iters=p["polish_iters"], move_weights=weights,
+                known_areas=public_areas, exclude_start=not fresh,
             )
             hops += r.steps
-            fresh = start in ("random", "layout")
             if not fresh and (start_score is None or r.start.area < start_score):
                 start_score = r.start.area
             # a chain only counts for what it newly found: not its own start, and not a public
@@ -89,17 +91,19 @@ class KakeyaNeedle(Problem):
             known = public_areas + ([r.start.area] if not fresh else [])
             new = [(a, i) for i, (_, a) in enumerate(r.attempts) if all(abs(a - k) > 1e-12 for k in known)]
             outcome = min(new)[0] if new else None
-            cand = r.best
+            cand = r.best_new  # what the worker hands back is its best NEW arrangement, never a rebuilt public one
             if not fresh:
                 better = outcome is not None and outcome < r.start.area - 1e-12
                 started += 1
                 improved += better
                 if r.start.area <= top_bar + 1e-12:
+                    # climbing = a new arrangement strictly better than the second-best public one, reached from a top start.
+                    # (Merely drifting from our own arrangement towards a public one does not count.)
                     top_started += 1
-                    top_improved += better
+                    top_improved += outcome is not None and outcome < second_best - 1e-12
             if outcome is not None:
                 scores.append(float(outcome))
-            if best is None or cand.area < best.area:
+            if cand is not None and (best is None or cand.area < best.area):
                 best = cand
         best_solution = best_score = None
         if best is not None:
