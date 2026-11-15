@@ -17,7 +17,7 @@ LAMBDA_NEW_BEST = 0.002  # tie-breaker: "improves our own best" counts for 1/500
 DEFAULT_RATING = 0.0005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $2,000
 RATING_BOUNDS = (1.0 / 5000.0, 1.0 / 10.0)  # opening prices are kept between $10 and $5,000
 RECENT_CARDS = 3  # tail fits use a strategy's most recent cards (its starting pool drifts as elites improve)
-W_CLIMB = 0.01  # allocator weight of climbing evidence: P(an attempt improves a top-3 known solution it started from)
+W_CLIMB = 0.01  # allocator weight of climbing evidence (a heuristic, not a calibrated probability of a record; logged with every allocation)
 
 
 def solution_sha(solution: dict) -> str:
@@ -186,7 +186,11 @@ class Market:
         else:
             eps = 0.5 if ps.integer else abs(bar) * 1e-12
             own = bar + eps if ps.maximize else bar - eps
-            q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0, integer=ps.integer, sceptical=False)
+            nxt = (bar + 1 if ps.maximize else bar - 1) if ps.integer else own
+            if ps.beats_record(nxt):
+                q_best = q_rec  # beating our best would itself be a record: one event, one forecast
+            else:
+                q_best = pricing.quote(att, ps.maximize, own, cpa, seed=seed + 1, xi_prior=xi0, integer=ps.integer, sceptical=False)
         return q_rec, q_best
 
     def forecast(self, s: Strategy, budget_usd: float) -> dict:
@@ -213,7 +217,7 @@ class Market:
         return {
             "sid": s.sid, "problem": s.problem, "model": q.model, "n_attempts": s.n_attempts(), "cost_per_attempt": s.cost_per_attempt(),
             "opening_price_usd": s.opening_price(self.calibration.trust("prior", "record")), "started_from_known": s.started, "improved_on_start": s.improved,
-            "top_started": s.top_started, "top_improved": s.top_improved,
+            "top_started": s.top_started, "top_improved": s.top_improved, "ladder": s.ladder,
             "p_attempt": q.p_attempt, "p_lo": q.p_lo, "p_hi": q.p_hi, "usd_to_record": _finite(q.usd_to_target),
             "xi": fit.xi if fit else None, "sigma": fit.sigma if fit else None,
             "u": (fit.u if self.problems[s.problem].maximize else -fit.u) if fit else None,

@@ -239,7 +239,9 @@ def quote(attempts, maximize: bool, target: float, cost_per_attempt: float, seed
     rng = np.random.default_rng(seed)
     b0 = prior_usd / (2.0 * max(cost_per_attempt, 1e-12)) if sceptical else 0.5
     counted = rng.beta(0.5 + s, b0 + n - s, size=n_samples)
-    if integer or np.unique(x).size < 4 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
+    # near-duplicate outcomes (the same local minimum reached twice, equal to 9 digits) are one value, not spread
+    distinct = np.unique(np.round(x / max(float(np.abs(x).max()), 1e-300), 9)).size
+    if integer or distinct < 8 or x.size < MIN_ATTEMPTS_FOR_TAIL_FIT:
         return Quote("beta", int(x.size), cost_per_attempt, counted)
     fit = fit_tail(x, maximize=maximize, n_boot=n_samples, seed=seed, xi_prior=xi_prior)
     t = target if maximize else -target

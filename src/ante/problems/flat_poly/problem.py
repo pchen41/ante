@@ -94,6 +94,7 @@ class FlatPolynomials(Problem):
             "official_grid_score": exact.grid_score(c),
             "continuous_sup_score": exact.sup_score(c),
             "continuous_sup_upper_bound": exact.sup_upper_bound(c),
+            "certified_below_record": bool(exact.sup_upper_bound(c) < self.record()),
             "note": "the official verifier samples 1e6 points; we also require the certified continuous sup-norm to beat the record",
         }
 

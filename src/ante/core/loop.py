@@ -25,7 +25,7 @@ from ante import problems as registry
 
 from . import arena, referee, runner as runner_mod, verify
 from .ledger import Ledger
-from .market import Market, ProblemState, Strategy, solution_sha
+from .market import LAMBDA_NEW_BEST, W_CLIMB, Market, ProblemState, Strategy, solution_sha
 
 SEEDS = {
     "kakeya-needle-128": [
@@ -213,7 +213,7 @@ class Loop:
         if forecast["source"] == "prior" and forecast["p_record"] is not None:
             # the proposer's forecast was "per $1 of compute"; convert to this card's budget
             forecast["p_record"] = 1.0 - (1.0 - min(forecast["p_record"], 1 - 1e-12)) ** est
-        card = {"cid": cid, "sid": s.sid, "problem": s.problem, "stage": stage, "workers": workers, "seconds": seconds, "budget_usd": est, "forecast": forecast}
+        card = {"cid": cid, "sid": s.sid, "problem": s.problem, "stage": stage, "workers": workers, "seconds": seconds, "budget_usd": est, "forecast": forecast, "baseline": self.market.problems[s.problem].best}
         self.ledger.append("card", **card)
         return card
 
@@ -237,7 +237,6 @@ class Loop:
         scores = [x for r in results for x in r["scores"]]
         errors = [r.get("error") for r in results if not r.get("ok")]
         s.batches.append(scores)
-        s.record_hits += sum(1 for x in scores if st.beats_record(x))
         for r in results:
             if r.get("start_score") is not None and (s.start_score is None or st.better(r["start_score"], s.start_score)):
                 s.start_score = float(r["start_score"])
@@ -258,7 +257,7 @@ class Loop:
         # the workers' own claims are not trusted: re-score the best candidate with the independent checker
         claims = [r for r in results if r.get("best_solution") is not None and r.get("best_score") is not None]
         claims.sort(key=lambda r: -r["best_score"] if st.maximize else r["best_score"])
-        card_best, new_best, beat_record = None, False, False
+        card_best, new_best, beat_record, beat_baseline = None, False, False, False
         for r in claims[:3]:
             try:
                 score = float(p.exact_score(r["best_solution"]))
@@ -275,6 +274,7 @@ class Loop:
             if s.best is None or st.better(score, s.best):
                 s.best = score
             st.add_elite(score, p.canonical(r["best_solution"]), r["best_solution"])
+            beat_baseline = card.get("baseline") is None or st.better(score, card["baseline"])
             if st.better(score, st.best):
                 st.best, new_best = score, True
                 sha = solution_sha(r["best_solution"])
@@ -284,8 +284,9 @@ class Loop:
                 self.ledger.append("candidate", problem=s.problem, score=score, cid=card["cid"], sid=s.sid, solution_sha=sha, path=str(path.relative_to(self.dir)),
                                    lineage=p.lineage(s.kernel, s.params))
                 if st.beats_record(score):
-                    beat_record = True
                     v = verify.gauntlet(p, r["best_solution"], self.ledger, sha, sandbox=self.cfg.sandbox_verify)
+                    beat_record = bool(v["ok"])  # a record counts only once every check has passed
+                    s.record_hits += int(beat_record)
                     self.ledger.append("note", text=(
                         f"RECORD CANDIDATE on {s.problem}: {score!r} vs record {st.record!r} (target {st.target!r}). "
                         f"Verification {'PASSED' if v['ok'] else 'FAILED'}: {v['checks']}. Held for a human decision; nothing was submitted."))
@@ -309,7 +310,8 @@ class Loop:
                 f"Card {card['cid']} for {s.sid} ({s.problem}) produced no attempt outcomes"
                 + (f" ({errors[0]})" if errors else " (its attempts did not finish within the card, or every window was skipped)")
                 + ("; second time, so the strategy is retired." if s.retired else "; it will get one more pilot.")))
-        outcome = {"new_best": new_best, "beat_record": beat_record, "best": card_best}
+        # the forecast was about beating the best we held when the card was filed, so that is what it is judged on
+        outcome = {"new_best": beat_baseline, "beat_record": beat_record, "best": card_best}
         verdict = referee.judge(card["forecast"], outcome, st.maximize)
         self.ledger.append("referee", cid=card["cid"], sid=s.sid, forecast=card["forecast"], outcome=outcome, **verdict)
         f = card["forecast"]
@@ -387,7 +389,7 @@ class Loop:
         if tranche > 0.2 * cfg.tranche_usd:
             table, chosen = self.market.allocate(tranche, cfg.fund_k, min_share_usd=cfg.pilot_usd, uniform=cfg.allocator == "uniform")
             names = ", ".join(f"{s.sid} ({s.problem})" for s, _ in chosen) or "nothing"
-            self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(),
+            self.ledger.append("allocation", cycle=self.cycle, budget_left_usd=self.budget_left(), tranche_usd=tranche, table=table, calibration=self.market.calibration.table(), weights={"climb": W_CLIMB, "new_best": LAMBDA_NEW_BEST},
                                note=(f"Funded {names}: chosen at random with equal shares (uniform-allocation control arm)." if cfg.allocator == "uniform" else
                                      f"Funded {names}: highest sampled chance of a record, plus evidence of improving top known solutions; "
                                      "the tranche is split in proportion to the draws."))

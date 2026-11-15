@@ -36,3 +36,16 @@ own units (the number the arena would report). Dollar amounts are USD.
   was given for this tranche, the sampled draw that ranked it, and whether it was funded.
 - **Can I trust the score?** `verification` events: the independent exact checker, the official verifier run
   in a network-blocked sandbox, a problem-specific audit, and a provenance check.
+
+## Caveats
+
+- **Price.** `usd_to_record` is a plug-in estimate: cost per attempt divided by the posterior mean of the success probability. It is not
+  a posterior expected stopping cost (with no successes observed that expectation is infinite).
+- **Attempts are not independent.** Chains in one card share starting pools and donors, so the effective sample is smaller than the count.
+- **Climbing weight.** The allocator adds a fixed weight times the observed rate at which a strategy improves top known solutions. It is a
+  heuristic for directing money among strategies that have never produced a record, not a calibrated probability; the weights are logged in
+  every `allocation` event.
+- **What lives outside the ledger.** Per-card attempt outcomes are in `attempts/<cid>.json` and candidate solutions in `candidates/`, both
+  referenced from ledger events. The pool of our own best solutions that workers may start from is not logged event by event.
+- **Records.** `beat_record` is true only after all verification checks have passed; a `candidate` event alone is a claim, not a record.
+- **Budget.** The compute budget is checked between cycles, so a run can overshoot it by about one tranche.

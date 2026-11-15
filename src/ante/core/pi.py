@@ -159,7 +159,7 @@ class PI:
     def propose(self, market: Market, problem, slug: str, n: int, pilot_usd: float) -> list[Strategy]:
         user = (
             self._context(market, problem, slug)
-            + "\n\nLEADS: a live strategy whose attempts improved on a top known solution it started from is a proven climbing mechanism, "
+            + "\n\nLEADS: a live strategy whose attempts improved on a top known solution it started from has shown it can improve strong solutions. Whether that carries over to the record itself is a hypothesis, but it is "
             "the strongest evidence there is short of a record. If one exists and has not been tried at a longer time scale or a larger "
             "scale, your first proposal must exploit or refine it (for example chains 5 to 15 times longer, or the same walk started only "
             "from the highest rung). Do not propose a third cosmetic variant of something that already failed."
