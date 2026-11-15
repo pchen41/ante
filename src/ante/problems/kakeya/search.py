@@ -384,6 +384,16 @@ def mv_crossover(x, rng, ctx):
     return y
 
 
+NEAR_COPY_OFFSETS = 16  # an arrangement counts as new only if at least this many offsets differ from every public one
+
+
+def is_distinct(x, refs, min_moved: int = NEAR_COPY_OFFSETS) -> bool:
+    """True when `x` differs from every reference arrangement (given centred, mirror images included) in at
+    least `min_moved` offsets by more than W/100. A few triangles nudged in someone else's layout is a near-copy."""
+    xc = x - x.mean()
+    return all(int((np.abs(xc - r) > W / 100).sum()) >= min_moved for r in refs)
+
+
 def group_boundaries(x, thr: float = 0.4) -> np.ndarray:
     """Indices i where a new group starts at i (offset jumps up by more than thr * W)."""
     return np.nonzero(np.diff(x) > thr * W)[0] + 1

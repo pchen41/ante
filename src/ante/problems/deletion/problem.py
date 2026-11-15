@@ -82,6 +82,17 @@ class DeletionCode(Problem):
         pool = [e for e in elites if len(e["words"]) >= top - 1]
         return words_to_ints(pool[int(rng.integers(len(pool)))]["words"])
 
+    def _public_images(self) -> list[set]:
+        from .graph import symmetry_images, words_to_ints
+
+        return [set(np.asarray(img).tolist()) for s in self.public_solutions() for img in symmetry_images(words_to_ints(s["data"]["words"]))]
+
+    @staticmethod
+    def _distinct(code, refs, min_new_frac: float = 0.1) -> bool:
+        """True when at least 10% of the code's words are absent from every public code (any symmetry image)."""
+        c = set(np.asarray(code).tolist())
+        return all(len(c - r) >= min_new_frac * len(c) for r in refs)
+
     def _donor(self, rng, elites, code):
         """A second good code, different from `code`: a public top-5 code or one of ours, in a random symmetry image."""
         from .graph import symmetry_images, words_to_ints
@@ -110,6 +121,7 @@ class DeletionCode(Problem):
         top_bar = sorted((float(x["score"]) for x in self.public_solutions()), reverse=True)[2]  # third-best public size
         ladder: dict[str, list[int]] = {}
         meta: dict = {"params": p}
+        refs = self._public_images()
         if kernel_name == "ils":
             p["ruin_max"] = max(p["ruin_max"], p["ruin_min"])
             kw = {k: p[k] for k in ("tmax", "kappa", "accept", "max_drop", "temp", "p_force", "p_ruin", "ruin_min", "ruin_max", "ruin_mode", "stall", "greedy_k", "ruin_greedy_k")}
@@ -133,8 +145,9 @@ class DeletionCode(Problem):
                     rung[0] += 1
                     rung[1] += int(r["best"] > len(x0))
                     if len(x0) >= top_bar:
+                        # climbing = a larger code that is not a near-copy of a public one
                         top_started += 1
-                        top_improved += int(r["best"] > len(x0))
+                        top_improved += int(r["best"] > len(x0) and self._distinct(s.best_ints(), refs))
                 if best is None or r["best"] > len(best):
                     best = s.best_ints()
             meta["iterations"] = iters
@@ -174,7 +187,7 @@ class DeletionCode(Problem):
                 top_started += int(len(code) >= top_bar)
                 if out.get("gain", 0) > 0:
                     improved += 1
-                    top_improved += int(len(code) >= top_bar)
+                    top_improved += int(len(code) >= top_bar and self._distinct(out["new_code"], refs))
                     code = np.asarray(out["new_code"], dtype=np.int64)
                 scores.append(float(len(code)))
             best = code
@@ -223,6 +236,8 @@ class DeletionCode(Problem):
             "cannot be improved inside any single weight layer, any two adjacent layers, or tens of thousands of 40-word clusters, so a "
             "227 needs a coordinated change of 30+ words, a temporary descent below 226, or a splice of two different codes. The last "
             "leaderboard step is reproducible: ILS chains that start from the public 225 code with Metropolis acceptance (temp 1.0-1.5), "
-            "max_drop 8, tmax 5-8, weight-band ruins of 8-40 words and p_ruin 0.04-0.08 reached new 226-word codes in 3 of 8 chains of "
-            "40-60 s. Nothing has yet improved a 226 start. Chains of 300-900 s are untested."
+            "max_drop 8, tmax 5-8, weight-band ruins of 8-40 words and p_ruin 0.04-0.08 reached 226-word codes in about 1 of 4 chains of "
+            "40-60 s, but every one of them lies within 2 to 7 words of the public 226 code: the walk rediscovers the record holder's "
+            "code, it does not find a new one. Climbing now counts only results that are not near-copies (at least 10% of the words "
+            "absent from every public code). Nothing has yet improved a 226 start. Chains of 300-900 s are untested."
         )

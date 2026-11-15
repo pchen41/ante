@@ -59,6 +59,7 @@ class KakeyaNeedle(Problem):
         started = improved = top_started = top_improved = 0
         top_bar = sorted(public_areas)[2]  # area of the third-best public solution
         second_best = sorted(public_areas)[1]
+        refs = [y - y.mean() for x in public for y in (x, mirror(x))]  # public arrangements and their mirror images
         while True:
             left = seconds - (time.time() - t0)
             if left < 2.0 or (scores and left < 0.5 * p["chain_seconds"]):
@@ -100,7 +101,8 @@ class KakeyaNeedle(Problem):
                     # climbing = a new arrangement strictly better than the second-best public one, reached from a top start.
                     # (Merely drifting from our own arrangement towards a public one does not count.)
                     top_started += 1
-                    top_improved += outcome is not None and outcome < second_best - 1e-12
+                    top_improved += (outcome is not None and outcome < second_best - 1e-12 and r.best_new is not None
+                                     and S.is_distinct(r.best_new.x, refs))
             if outcome is not None:
                 scores.append(float(outcome))
             if cand is not None and (best is None or cand.area < best.area):
