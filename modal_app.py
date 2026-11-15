@@ -56,7 +56,8 @@ def work(jobs: list[dict]) -> list[dict]:
     return worker.run_jobs(jobs)
 
 
-@app.function(image=image, cpu=1, memory=2048, timeout=24 * 3600, secrets=[modal.Secret.from_name("ante-keys")], volumes={"/runs": runs})
+# nonpreemptible: the orchestrator holds the run's state in memory, so it must not be evicted mid-run (workers may be).
+@app.function(image=image, cpu=1, memory=2048, timeout=24 * 3600, secrets=[modal.Secret.from_name("ante-keys")], volumes={"/runs": runs}, nonpreemptible=True)
 def orchestrate(cfg: dict) -> dict:
     """The research loop itself. Runs in the cloud so nothing depends on a laptop staying awake."""
     from ante.core.loop import Config, Loop
