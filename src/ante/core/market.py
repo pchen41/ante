@@ -13,7 +13,7 @@ import numpy as np
 
 from . import pricing
 
-LAMBDA_NEW_BEST = 0.002  # tie-breaker: "improves our own best" counts for 1/500 of "sets a record"
+LAMBDA_NEW_BEST = 0.5  # a strategy likely to improve our own best gets at most 1.5x its sampled record chance, never more
 DEFAULT_RATING = 0.0005  # P(record per $1) assumed for a strategy nobody has rated: an opening price of $2,000
 RATING_BOUNDS = (1.0 / 5000.0, 1.0 / 10.0)  # opening prices are kept between $10 and $5,000
 RECENT_CARDS = 3  # tail fits use a strategy's most recent cards (its starting pool drifts as elites improve)
@@ -230,7 +230,9 @@ class Market:
         For each strategy, draw one plausible value of
           P(record within a nominal share of the tranche)                      [success counting, capped tail fit]
         + W_CLIMB * P(an attempt improves a top-3 known solution it started from) [the strongest evidence short of a record]
-        + LAMBDA_NEW_BEST * P(new own best within the share)                    [tie-breaker]
+        the record chance multiplied by (1 + LAMBDA_NEW_BEST * P(new own best within the share)) [tie-breaker: it
+        scales the record chance rather than adding to it, so a strategy that merely polishes near-copies cannot outbid one
+        with a better chance of a record]
         each scaled by how well that forecast source has been calibrated. The top `k` draws are funded,
         and the tranche is split in proportion to their draws (never less than `min_share_usd` each).
         With `uniform=True` (the ablation arm) k live strategies are funded at random with equal shares.
@@ -248,7 +250,7 @@ class Market:
             pr = np.minimum(q_rec.p_within_samples(share) * t_rec, 1.0)
             pb = np.minimum(q_best.p_within_samples(share) * t_best, 1.0)
             climb = float(self.rng.beta(0.5 + s.top_improved, 0.5 + s.top_started - s.top_improved)) if s.top_started else 0.0
-            draw = float(self.rng.choice(pr)) + W_CLIMB * climb + LAMBDA_NEW_BEST * float(self.rng.choice(pb))
+            draw = float(self.rng.choice(pr)) * (1.0 + LAMBDA_NEW_BEST * float(self.rng.choice(pb))) + W_CLIMB * climb
             if uniform:
                 draw = float(self.rng.random())
             rows.append({

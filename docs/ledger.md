@@ -49,3 +49,5 @@ own units (the number the arena would report). Dollar amounts are USD.
   referenced from ledger events. The pool of our own best solutions that workers may start from is not logged event by event.
 - **Records.** `beat_record` is true only after all verification checks have passed; a `candidate` event alone is a claim, not a record.
 - **Budget.** The compute budget is checked between cycles, so a run can overshoot it by about one tranche.
+- **Allocation draw.** draw = sampled P(record within share) x (1 + 0.5 x sampled P(new own best)) + climbing weight x climbing rate.
+  An earlier version added the new-best term, which let strategies polishing near-copies outbid everything (night3, first round).
